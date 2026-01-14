@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Radiocity
+Comment=Lecteur de radios en ligne
+TryExec=radiocity
+Exec=radiocity
+Icon=radiocity
+Terminal=false
+Type=Application
+Categories=Audio;Player;

@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+.venv*/
+.env
+.env.*
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.vscode/
+.idea/
+.DS_Store
+*.log
+
+# Local config/cache
+.cache/
