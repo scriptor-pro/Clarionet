@@ -7,3 +7,4 @@ Icon=clarionet
 Terminal=false
 Type=Application
 Categories=Audio;Player;
+StartupWMClass=clarionet

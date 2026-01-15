@@ -1,15 +1,15 @@
-# Radiocity — agent.md
+# Clarionet — agent.md
 
 ## 1. Identité du projet
 
 **Nom du projet**  
-Radiocity
+Clarionet
 
 **Statut**  
 Usage personnel dans un premier temps, avec objectif de publication.
 
 **Phrase d’intention**  
-Radiocity est une application Linux simple et minimaliste permettant d’écouter des radios en ligne.  
+Clarionet est une application Linux simple et minimaliste permettant d’écouter des radios en ligne.  
 Elle privilégie la fonction à la forme, la sobriété à l’accumulation, et l’intégration native au desktop Linux.
 
 ---
@@ -24,7 +24,7 @@ Elle privilégie la fonction à la forme, la sobriété à l’accumulation, et 
 - Données locales, lisibles et modifiables  
 - Application discrète, rapide et prévisible  
 
-Radiocity doit s’effacer derrière l’usage : choisir une radio, appuyer sur lecture, écouter.
+Clarionet doit s’effacer derrière l’usage : choisir une radio, appuyer sur lecture, écouter.
 
 ---
 
@@ -124,7 +124,7 @@ Ces radios sont fournies comme valeurs par défaut et peuvent être modifiées o
 ### Emplacement
 
 ```
-~/.config/radiocity/
+~/.config/clarionet/
 ```
 
 ### Fichiers
@@ -143,7 +143,7 @@ Ces radios sont fournies comme valeurs par défaut et peuvent être modifiées o
 
 ## 10. Ligne rouge
 
-Radiocity ne deviendra pas :
+Clarionet ne deviendra pas :
 - une usine à fonctionnalités  
 - une application web déguisée  
 - un produit dépendant d’un service externe  
@@ -160,7 +160,7 @@ Radiocity ne deviendra pas :
 
 ## 12. Licence
 
-Radiocity est distribué sous licence MIT.
+Clarionet est distribué sous licence MIT.
 
 ---
 
@@ -226,7 +226,7 @@ Tailles :
 
 - Activée par défaut  
 - Locale uniquement  
-- Fichier : `~/.config/radiocity/radiocity.log`  
+- Fichier : `~/.config/clarionet/clarionet.log`  
 
 ---
 

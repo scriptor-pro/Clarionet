@@ -16,6 +16,7 @@ import shutil
 import ssl
 import uuid
 import warnings
+import webbrowser
 import ctypes
 import ctypes.util
 
@@ -32,18 +33,20 @@ import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
+gi.require_version("Pango", "1.0")
+gi.require_version("PangoCairo", "1.0")
+from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, Pango, PangoCairo
 
-APP_NAME = "Radiocity"
-APP_VERSION = "0.1.7"
+APP_NAME = "Clarionet"
+APP_VERSION = "0.2.1"
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
-CONFIG_DIR = Path.home() / ".config" / "radiocity"
+CONFIG_DIR = Path.home() / ".config" / "clarionet"
 RADIOS_PATH = CONFIG_DIR / "radios.json"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 MPV_SOCKET = CONFIG_DIR / "mpv.sock"
 ICONS_DIR = CONFIG_DIR / "icons"
-LOG_PATH = CONFIG_DIR / "radiocity.log"
-MPV_LOG_PATH = CONFIG_DIR / "mpv.log"
+LOG_PATH = CONFIG_DIR / "clarionet.log"
+MPV_LOG_PATH = CONFIG_DIR / "clarionet-mpv.log"
 STATE_IDLE = "idle"
 STATE_LOADING = "loading"
 STATE_PLAYING = "playing"
@@ -70,6 +73,11 @@ logger = logging.getLogger(__name__)
 warnings.filterwarnings(
     "ignore",
     message=".*StatusIcon.*deprecated.*",
+    category=DeprecationWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=".*set_wmclass.*deprecated.*",
     category=DeprecationWarning,
 )
 
@@ -164,9 +172,33 @@ def normalize_config(config, radios):
         last_radio_id = None
         changed = True
     volume = config.get("volume", 50)
+    presets = config.get("presets")
+    if presets is None:
+        presets = [None] * 6
+        changed = True
+    else:
+        cleaned = []
+        for preset_id in presets[:6]:
+            if preset_id and not any(radio["id"] == preset_id for radio in radios):
+                cleaned.append(None)
+                changed = True
+            else:
+                cleaned.append(preset_id)
+        if len(cleaned) < 6:
+            cleaned.extend([None] * (6 - len(cleaned)))
+            changed = True
+        presets = cleaned
+    radios_payload = [dict(radio) for radio in radios]
+    if config.get("radios") != radios_payload:
+        changed = True
     if "last_radio" in config:
         changed = True
-    return {"volume": volume, "last_radio_id": last_radio_id}, changed
+    return {
+        "volume": volume,
+        "last_radio_id": last_radio_id,
+        "presets": presets,
+        "radios": radios_payload,
+    }, changed
 
 
 def register_font(font_path):
@@ -400,35 +432,104 @@ class RadioRow(Gtk.ListBoxRow):
         self.icon.set_from_pixbuf(pixbuf)
 
 
-class RadiocityApp(Gtk.ApplicationWindow):
+class ClarionetApp(Gtk.ApplicationWindow):
     def __init__(self, application):
         super().__init__(title=f"{APP_NAME} {APP_VERSION}", application=application)
         self.base_title = f"{APP_NAME} {APP_VERSION}"
-        self.set_default_size(520, 420)
+        self.set_wmclass("clarionet", "Clarionet")
+        self.set_icon_name("clarionet")
+        self.fixed_width = 640
+        self.fixed_height = 395
+        self.set_default_size(self.fixed_width, self.fixed_height)
+        self.set_size_request(self.fixed_width, self.fixed_height)
+        self.set_resizable(False)
+        geometry = Gdk.Geometry()
+        geometry.min_width = self.fixed_width
+        geometry.min_height = self.fixed_height
+        geometry.max_width = self.fixed_width
+        geometry.max_height = self.fixed_height
+        self.set_geometry_hints(
+            self,
+            geometry,
+            Gdk.WindowHints.MIN_SIZE | Gdk.WindowHints.MAX_SIZE,
+        )
         self.set_border_width(16)
 
-        icon_path = ASSETS_DIR / "radiocity.svg"
+        self._set_window_icons()
+        icon_path = ASSETS_DIR / "icons" / "clarionet_icon_32x32.png"
         icon_pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
             str(icon_path), 28, 28, True
         )
         self.header_icon = Gtk.Image.new_from_pixbuf(icon_pixbuf)
         self.state_label = Gtk.Label(label=STATE_IDLE, xalign=0)
         self.current_label = Gtk.Label(label="-", xalign=0.5)
+        self.current_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.display_char_limit = 24
+        self.current_label.set_max_width_chars(self.display_char_limit)
         self.track_label = Gtk.Label(label="-", xalign=0.5)
+        self.track_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.track_label.set_max_width_chars(self.display_char_limit)
+        self.track_label.set_no_show_all(True)
+        self.track_label.hide()
+        self.marquee_tasks = {}
+        self.easter_timer_id = None
+        self.size_lock_id = None
 
         register_font(DIGITAL_FONT_PATH)
         self.get_style_context().add_class("app-window")
 
         self.mpv = MpvController(MPV_SOCKET)
+        legacy_dir = Path.home() / ".config" / "radiocity"
+        legacy_config = legacy_dir / "config.json"
+        legacy_radios = legacy_dir / "radios.json"
+        if not RADIOS_PATH.exists() and legacy_radios.exists():
+            RADIOS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(legacy_radios, RADIOS_PATH)
         if not RADIOS_PATH.exists():
             save_json(RADIOS_PATH, DEFAULT_RADIOS)
         radios_raw = load_json(RADIOS_PATH, DEFAULT_RADIOS)
+        if legacy_radios.exists():
+            legacy_radios_raw = load_json(legacy_radios, [])
+            existing = {
+                (
+                    (radio.get("name") or "").strip().lower(),
+                    (radio.get("stream_url") or "").strip(),
+                )
+                for radio in radios_raw
+            }
+            for radio in legacy_radios_raw:
+                key = (
+                    (radio.get("name") or "").strip().lower(),
+                    (radio.get("stream_url") or radio.get("url") or "").strip(),
+                )
+                if key not in existing:
+                    radios_raw.append(radio)
+                    existing.add(key)
         self.radios, radios_changed = normalize_radios(radios_raw)
         if radios_changed:
             save_json(RADIOS_PATH, self.radios)
+        if not CONFIG_PATH.exists() and legacy_config.exists():
+            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(legacy_config, CONFIG_PATH)
         if not CONFIG_PATH.exists():
-            save_json(CONFIG_PATH, {"volume": 50, "last_radio_id": None})
-        config_raw = load_json(CONFIG_PATH, {"volume": 50, "last_radio_id": None})
+            save_json(
+                CONFIG_PATH,
+                {"volume": 50, "last_radio_id": None, "presets": [None] * 6},
+            )
+        config_raw = load_json(
+            CONFIG_PATH,
+            {"volume": 50, "last_radio_id": None, "presets": [None] * 6},
+        )
+        if legacy_config.exists():
+            legacy_config_raw = load_json(legacy_config, {})
+            legacy_presets = legacy_config_raw.get("presets") or []
+            current_presets = config_raw.get("presets") or []
+            if legacy_presets and not any(current_presets):
+                config_raw["presets"] = legacy_presets
+            if not config_raw.get("last_radio_id") and legacy_config_raw.get(
+                "last_radio_id"
+            ):
+                config_raw["last_radio_id"] = legacy_config_raw.get("last_radio_id")
         self.config, config_changed = normalize_config(config_raw, self.radios)
         if config_changed:
             save_json(CONFIG_PATH, self.config)
@@ -476,22 +577,17 @@ class RadiocityApp(Gtk.ApplicationWindow):
         self.station_next_button.set_always_show_image(True)
         self.station_prev_button.connect("clicked", self.on_station_prev)
         self.station_next_button.connect("clicked", self.on_station_next)
-        station_text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        station_text_box.set_hexpand(True)
-        station_text_box.set_halign(Gtk.Align.FILL)
-        station_text_box.pack_start(self.current_label, True, True, 0)
-        station_text_box.pack_start(self.track_label, True, True, 0)
 
-        self.station_selector = Gtk.Box(spacing=12)
-        self.station_selector.pack_start(self.station_prev_button, False, False, 0)
-        self.station_selector.pack_start(station_text_box, True, True, 0)
-        self.station_selector.pack_start(self.station_next_button, False, False, 0)
-        self.station_selector.get_style_context().add_class("station-selector")
-        self.station_selector.get_style_context().add_class("now-playing-box")
+        self.station_display = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.station_display.set_hexpand(True)
+        self.station_display.set_halign(Gtk.Align.FILL)
+        self.station_display.pack_start(self.current_label, True, True, 0)
+        self.station_display.pack_start(self.track_label, True, True, 0)
+        self.station_display.get_style_context().add_class("now-playing-box")
 
-        self.play_button = Gtk.Button(label="Lecture")
-        self.pause_button = Gtk.Button(label="Pause")
-        self.stop_button = Gtk.Button(label="Arret")
+        self.play_button = Gtk.Button()
+        self.pause_button = Gtk.Button()
+        self.stop_button = Gtk.Button()
         self.play_button.set_image(
             Gtk.Image.new_from_icon_name(
                 "media-playback-start-symbolic", Gtk.IconSize.BUTTON
@@ -558,25 +654,77 @@ class RadiocityApp(Gtk.ApplicationWindow):
         self.volume_plus_button.connect("released", self.on_volume_release)
 
         controls_box = Gtk.Box(spacing=8)
+        controls_box.pack_start(self.station_prev_button, False, False, 0)
         controls_box.pack_start(self.play_button, False, False, 0)
         controls_box.pack_start(self.pause_button, False, False, 0)
         controls_box.pack_start(self.stop_button, False, False, 0)
+        controls_box.pack_start(self.station_next_button, False, False, 0)
+        controls_box.get_style_context().add_class("controls-box")
 
         self.current_label.set_hexpand(True)
         self.current_label.set_halign(Gtk.Align.FILL)
 
+        self.preset_box = Gtk.Box(spacing=8)
+        self.preset_buttons = []
+        self.preset_timers = {}
+        self.preset_saved = set()
+        self.preset_css_provider = Gtk.CssProvider()
+        self.preset_css_provider.load_from_data(
+            b"""
+            .preset-button { background-color: #000000; }
+            .preset-button:active { background-color: #111111; }
+            """
+        )
+        screen = Gdk.Screen.get_default()
+        if screen:
+            Gtk.StyleContext.add_provider_for_screen(
+                screen,
+                self.preset_css_provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_USER + 1,
+            )
+        for index, label in enumerate(("1", "2", "3", "4", "5", "6")):
+            button = Gtk.Button()
+            button.set_relief(Gtk.ReliefStyle.NONE)
+            button.get_style_context().add_class("preset-button")
+            button.get_style_context().add_provider(
+                self.preset_css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            )
+            drawing = Gtk.DrawingArea()
+            drawing.set_hexpand(True)
+            drawing.set_vexpand(True)
+            drawing.connect("draw", self.on_preset_draw, index)
+            button.add(drawing)
+            button.connect("pressed", self.on_preset_pressed, index)
+            button.connect("released", self.on_preset_released, index)
+            self.preset_buttons.append(
+                {"button": button, "drawing": drawing, "text": label, "active": False}
+            )
+            self.preset_box.pack_start(button, True, True, 0)
+        self.add_station_button = self._build_add_station_button()
+        self.add_station_button.get_style_context().add_provider(
+            self.preset_css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        self.preset_box.pack_start(self.add_station_button, False, False, 0)
+        self.preset_box.get_style_context().add_class("preset-box")
+
         volume_box = Gtk.Box(spacing=8)
-        volume_icon = Gtk.Image.new_from_icon_name(
+        self.volume_icon = Gtk.Image.new_from_icon_name(
             "audio-volume-high-symbolic", Gtk.IconSize.BUTTON
         )
-        volume_box.pack_start(volume_icon, False, False, 0)
+        self.volume_icon.add_events(
+            Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK
+        )
+        self.volume_icon.connect("button-press-event", self.on_easter_press)
+        self.volume_icon.connect("button-release-event", self.on_easter_release)
+        volume_box.pack_start(self.volume_icon, False, False, 0)
         volume_box.pack_start(self.volume_value_label, False, False, 0)
         volume_box.pack_start(self.volume_minus_button, False, False, 0)
         volume_box.pack_start(self.volume_plus_button, False, False, 0)
         volume_box.set_halign(Gtk.Align.END)
 
         body_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
-        body_box.pack_start(self.station_selector, False, False, 0)
+        body_box.pack_start(self.preset_box, False, False, 0)
+        body_box.pack_start(self.station_display, False, False, 0)
 
         footer_box = Gtk.Box(spacing=16)
         footer_box.set_size_request(-1, 56)
@@ -585,41 +733,55 @@ class RadiocityApp(Gtk.ApplicationWindow):
         footer_box.pack_start(controls_box, False, False, 0)
         footer_box.pack_start(volume_box, True, True, 0)
 
-        self.menu_bar = self._build_menu_bar()
-
-        top_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        top_bar.set_hexpand(True)
-        top_bar.pack_start(self.header_icon, False, False, 0)
-        top_bar.pack_start(self.state_label, False, False, 0)
-
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
-        main_box.pack_start(top_bar, False, False, 0)
-        main_box.pack_start(self.menu_bar, False, False, 0)
         main_box.pack_start(body_box, True, True, 0)
         main_box.pack_start(footer_box, False, False, 0)
 
         self.add(main_box)
 
-        top_bar.get_style_context().add_class("top-bar")
-        self.menu_bar.get_style_context().add_class("menu-bar")
         footer_box.get_style_context().add_class("footer")
         self.current_label.get_style_context().add_class("now-playing")
         self.track_label.get_style_context().add_class("now-playing")
-        self.state_label.get_style_context().add_class("state-label")
         self.connect("delete-event", self.on_delete_event)
 
         self.tray = self._build_tray()
         self._install_shortcuts()
         self._install_list_styles()
         self.mpv.start_event_listener(self.handle_mpv_event)
+        self.connect("size-allocate", self.enforce_fixed_size)
+        self.connect("map-event", self.on_map_event)
+        self.connect("realize", self.on_realize)
 
         self.restore_selection()
+        self.refresh_preset_labels()
+        self.update_preset_styles()
         self.set_state(STATE_IDLE)
         self.update_control_styles()
+        self.station_display.connect("size-allocate", self.on_display_resize)
+
+    def _set_window_icons(self):
+        icon_dir = ASSETS_DIR / "icons"
+        icon_sizes = [16, 24, 32, 48, 64, 96, 128, 256, 512]
+        pixbufs = []
+        for size in icon_sizes:
+            path = icon_dir / f"clarionet_icon_{size}x{size}.png"
+            if not path.exists():
+                continue
+            try:
+                pixbufs.append(GdkPixbuf.Pixbuf.new_from_file(str(path)))
+            except Exception:
+                continue
+        if pixbufs:
+            self.set_icon_list(pixbufs)
 
     def _build_tray(self):
+        icon_path = ASSETS_DIR / "icons" / "clarionet_icon_32x32.png"
         try:
-            tray = Gtk.StatusIcon.new_from_icon_name("audio-x-generic")
+            if icon_path.exists():
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file(str(icon_path))
+                tray = Gtk.StatusIcon.new_from_pixbuf(pixbuf)
+            else:
+                tray = Gtk.StatusIcon.new_from_icon_name("clarionet")
         except Exception as exc:
             logger.warning("Tray icon unavailable: %s", exc)
             return None
@@ -631,44 +793,27 @@ class RadiocityApp(Gtk.ApplicationWindow):
         tray.connect("popup-menu", self.on_tray_menu)
         return tray
 
-    def _build_menu_bar(self):
-        menu_bar = Gtk.MenuBar()
+    def _build_add_station_button(self):
+        menu = Gtk.Menu()
 
-        file_menu = Gtk.Menu()
-        file_item = Gtk.MenuItem(label="Fichier")
-        file_item.set_submenu(file_menu)
+        add_stream_item = Gtk.MenuItem(label="Ajouter une radio")
+        add_browser_item = Gtk.MenuItem(label="Importer Radio-Browser")
 
-        remove_item = Gtk.MenuItem(label="Supprimer")
-        quit_item = Gtk.MenuItem(label="Quitter")
-        remove_item.connect("activate", lambda *_: self.on_remove(None))
-        quit_item.connect("activate", lambda *_: self.quit_app())
-        file_menu.append(remove_item)
-        file_menu.append(quit_item)
-
-        add_menu = Gtk.Menu()
-        add_item = Gtk.MenuItem(label="Ajouter")
-        add_item.set_submenu(add_menu)
-
-        add_stream_item = Gtk.MenuItem(label="Adresse du stream")
-        add_browser_item = Gtk.MenuItem(label="Radio-Browser.info")
         add_stream_item.connect("activate", lambda *_: self.on_add(None))
         add_browser_item.connect("activate", lambda *_: self.on_add_browser())
-        add_menu.append(add_stream_item)
-        add_menu.append(add_browser_item)
 
-        help_menu = Gtk.Menu()
-        help_item = Gtk.MenuItem(label="Aide")
-        help_item.set_submenu(help_menu)
+        menu.append(add_stream_item)
+        menu.append(add_browser_item)
+        menu.show_all()
 
-        about_item = Gtk.MenuItem(label="A propos")
-        about_item.connect("activate", lambda *_: self.show_about())
-        help_menu.append(about_item)
-
-        menu_bar.append(file_item)
-        menu_bar.append(add_item)
-        menu_bar.append(help_item)
-        menu_bar.show_all()
-        return menu_bar
+        button = Gtk.MenuButton()
+        button.set_image(
+            Gtk.Image.new_from_icon_name("list-add-symbolic", Gtk.IconSize.BUTTON)
+        )
+        button.set_popup(menu)
+        button.get_style_context().add_class("preset-button")
+        button.get_style_context().add_class("preset-add")
+        return button
 
     def _install_shortcuts(self):
         accel_group = Gtk.AccelGroup()
@@ -716,12 +861,18 @@ class RadiocityApp(Gtk.ApplicationWindow):
             self.playing_id = None
             self.playing_name = None
             self.track_label.set_text("-")
+            self.track_label.hide()
+            self.update_marquee(self.track_label)
+            if state == STATE_IDLE and self.selected_row:
+                self.current_label.set_text(self.selected_row.name)
+                self.update_marquee(self.current_label)
+        self.update_preset_styles()
         self.state_label.set_text(state)
         self.set_title(f"{self.base_title} — {state}")
         if state == STATE_PAUSED:
-            self.pause_button.set_label("Reprendre")
+            self.pause_button.set_tooltip_text("Reprendre")
         else:
-            self.pause_button.set_label("Pause")
+            self.pause_button.set_tooltip_text("Pause")
         self.update_control_styles()
         self.refresh_row_styles()
 
@@ -825,8 +976,15 @@ class RadiocityApp(Gtk.ApplicationWindow):
                 GLib.idle_add(self.set_state, STATE_IDLE)
                 return
             if payload.get("name") == "media-title":
-                title = payload.get("data") or "-"
-                GLib.idle_add(self.track_label.set_text, title)
+                title = (payload.get("data") or "").strip()
+                if title:
+                    GLib.idle_add(self.track_label.set_text, title)
+                    GLib.idle_add(self.track_label.show)
+                    GLib.idle_add(self.schedule_marquee_now, self.track_label, title)
+                else:
+                    GLib.idle_add(self.track_label.hide)
+                    GLib.idle_add(self.track_label.set_text, "-")
+                GLib.idle_add(self.update_marquee, self.track_label)
 
     def on_window_key_press(self, _, event):
         if event.keyval == Gdk.KEY_Left:
@@ -894,10 +1052,230 @@ class RadiocityApp(Gtk.ApplicationWindow):
         if not row:
             return
         self.current_label.set_text(row.name)
+        self.update_marquee(self.current_label)
         self.selected_row = row
         self.config["last_radio_id"] = row.radio_id
         save_json(CONFIG_PATH, self.config)
         self.refresh_row_styles()
+
+    def on_display_resize(self, *_):
+        self.update_marquee(self.current_label)
+        self.update_marquee(self.track_label)
+
+    def enforce_fixed_size(self, *_):
+        self.resize(self.fixed_width, self.fixed_height)
+        return False
+
+    def on_map_event(self, *_):
+        GLib.idle_add(self.resize, self.fixed_width, self.fixed_height)
+        if self.size_lock_id is None:
+            self.size_lock_id = GLib.timeout_add(250, self.ensure_size_locked)
+        return False
+
+    def on_realize(self, *_):
+        window = self.get_window()
+        if not window:
+            return False
+        window.set_functions(
+            Gdk.WMFunction.MOVE | Gdk.WMFunction.MINIMIZE | Gdk.WMFunction.CLOSE
+        )
+        return False
+
+    def ensure_size_locked(self):
+        width, height = self.get_size()
+        if width != self.fixed_width or height != self.fixed_height:
+            self.resize(self.fixed_width, self.fixed_height)
+        return True
+
+    def on_easter_press(self, *_):
+        if int(self.volume_scale.get_value()) != 21:
+            return False
+        if self.easter_timer_id is not None:
+            GLib.source_remove(self.easter_timer_id)
+        self.easter_timer_id = GLib.timeout_add(1500, self.open_easter_egg)
+        return True
+
+    def on_easter_release(self, *_):
+        if self.easter_timer_id is not None:
+            GLib.source_remove(self.easter_timer_id)
+            self.easter_timer_id = None
+        return True
+
+    def open_easter_egg(self):
+        self.easter_timer_id = None
+        if int(self.volume_scale.get_value()) == 21:
+            webbrowser.open("https://fr.wikipedia.org/wiki/Radio_Cit%C3%A9_(Bruxelles)")
+        return False
+
+    def on_preset_draw(self, widget, cr, index):
+        entry = self.preset_buttons[index]
+        alloc = widget.get_allocation()
+        cr.set_source_rgb(0, 0, 0)
+        cr.rectangle(0, 0, alloc.width, alloc.height)
+        cr.fill()
+
+        color = (0.0, 1.0, 0.4) if entry["active"] else (0.95, 0.95, 0.95)
+        cr.set_source_rgb(*color)
+
+        layout = widget.create_pango_layout(entry["text"])
+        layout.set_ellipsize(Pango.EllipsizeMode.END)
+        layout.set_alignment(Pango.Alignment.CENTER)
+        layout.set_width(max(1, (alloc.width - 16)) * Pango.SCALE)
+        font = Pango.FontDescription("Sans Bold 10")
+        layout.set_font_description(font)
+
+        text_width, text_height = layout.get_pixel_size()
+        x = 0
+        y = max(0, int((alloc.height - text_height) / 2))
+        cr.move_to(x, y)
+        PangoCairo.show_layout(cr, layout)
+
+        return False
+
+    def update_marquee(self, label):
+        state = self.marquee_tasks.pop(label, None)
+        if state:
+            for key in ("start_id", "scroll_id"):
+                task_id = state.get(key)
+                if task_id:
+                    GLib.source_remove(task_id)
+        text = label.get_text() or ""
+        if not text or text == "-":
+            return
+        if not self.label_overflows(label):
+            return
+        start_id = GLib.timeout_add(30000, self.start_marquee, label, text)
+        self.marquee_tasks[label] = {"start_id": start_id, "text": text}
+
+    def schedule_marquee_now(self, label, text):
+        state = self.marquee_tasks.pop(label, None)
+        if state:
+            for key in ("start_id", "scroll_id"):
+                task_id = state.get(key)
+                if task_id:
+                    GLib.source_remove(task_id)
+        GLib.timeout_add(100, self.start_marquee_now, label, text)
+        return False
+
+    def start_marquee_now(self, label, text):
+        if not self.label_overflows(label):
+            return False
+        self.start_marquee(label, text)
+        return False
+
+    def label_overflows(self, label):
+        text = label.get_text() or ""
+        if text == "-":
+            return False
+        layout = label.get_layout()
+        if not layout:
+            return len(text) > self.display_char_limit
+        width, _ = layout.get_pixel_size()
+        available = label.get_allocated_width()
+        if available <= 0:
+            return len(text) > self.display_char_limit
+        return width > available or len(text) > self.display_char_limit
+
+    def start_marquee(self, label, text):
+        if not self.label_overflows(label):
+            return False
+        gap = "   "
+        padded = text + gap
+        total = len(padded)
+        state = {"offset": 0, "text": text, "padded": padded, "total": total}
+
+        def tick():
+            state["offset"] += 1
+            if state["offset"] >= state["total"]:
+                label.set_text(text)
+                self.update_marquee(label)
+                return False
+            rotated = (
+                state["padded"][state["offset"] :] + state["padded"][: state["offset"]]
+            )
+            label.set_text(rotated)
+            return True
+
+        scroll_id = GLib.timeout_add(120, tick)
+        self.marquee_tasks[label] = {"scroll_id": scroll_id, "text": text}
+        return False
+
+    def refresh_preset_labels(self):
+        presets = self.config.get("presets", [None] * 6)
+        for index, entry in enumerate(self.preset_buttons):
+            preset_id = presets[index] if index < len(presets) else None
+            if preset_id:
+                radio = next(
+                    (item for item in self.radios if item["id"] == preset_id), None
+                )
+                entry["text"] = radio["name"] if radio else str(index + 1)
+            else:
+                entry["text"] = str(index + 1)
+            entry["drawing"].queue_draw()
+        self.update_preset_styles()
+
+    def update_preset_styles(self):
+        presets = self.config.get("presets", [None] * 6)
+        active_id = self.playing_id
+        if (
+            not active_id
+            and self.selected_row
+            and self.state
+            in (
+                STATE_PLAYING,
+                STATE_PAUSED,
+                STATE_LOADING,
+            )
+        ):
+            active_id = self.selected_row.radio_id
+        for index, entry in enumerate(self.preset_buttons):
+            preset_id = presets[index] if index < len(presets) else None
+            entry["active"] = bool(preset_id and preset_id == active_id)
+            entry["drawing"].queue_draw()
+
+    def on_preset_pressed(self, _, index):
+        if index in self.preset_timers:
+            GLib.source_remove(self.preset_timers[index])
+        self.preset_saved.discard(index)
+        self.preset_timers[index] = GLib.timeout_add(600, self._save_preset, index)
+
+    def on_preset_released(self, _, index):
+        timer_id = self.preset_timers.pop(index, None)
+        if timer_id:
+            GLib.source_remove(timer_id)
+        if index in self.preset_saved:
+            self.preset_saved.discard(index)
+            return
+        self._recall_preset(index)
+
+    def _save_preset(self, index):
+        timer_id = self.preset_timers.pop(index, None)
+        if timer_id:
+            GLib.source_remove(timer_id)
+        row = self.selected_row or self.listbox.get_selected_row()
+        if not row:
+            return False
+        presets = self.config.get("presets", [None] * 6)
+        presets[index] = row.radio_id
+        self.config["presets"] = presets
+        save_json(CONFIG_PATH, self.config)
+        self.refresh_preset_labels()
+        self.preset_saved.add(index)
+        return False
+
+    def _recall_preset(self, index):
+        presets = self.config.get("presets", [None] * 6)
+        if index >= len(presets):
+            return
+        preset_id = presets[index]
+        if not preset_id:
+            return
+        for row in self.listbox.get_children():
+            if row.radio_id == preset_id:
+                self.listbox.select_row(row)
+                self.on_row_selected(None, row)
+                self.play_selected_row()
+                return
 
     def on_row_activated(self, *_):
         self.play_selected_row()
@@ -1084,6 +1462,7 @@ class RadiocityApp(Gtk.ApplicationWindow):
         self.playing_id = row.radio_id
         self.playing_name = row.name
         self.track_label.set_text("-")
+        self.update_preset_styles()
         logger.info("Play %s", row.name)
         logger.info("Stream URL %s", row.stream_url)
 
@@ -1198,6 +1577,15 @@ class RadiocityApp(Gtk.ApplicationWindow):
         dialog.run()
         dialog.destroy()
 
+        dialog.format_secondary_text(
+            "Easter egg: https://fr.wikipedia.org/wiki/Radio_Cit%C3%A9_(Bruxelles)"
+        )
+        dialog.add_button("Radio Cité", Gtk.ResponseType.APPLY)
+        response = dialog.run()
+        dialog.destroy()
+        if response == Gtk.ResponseType.APPLY:
+            webbrowser.open("https://fr.wikipedia.org/wiki/Radio_Cit%C3%A9_(Bruxelles)")
+
     def _install_list_styles(self):
         self.css_provider = Gtk.CssProvider()
         background_image = (ASSETS_DIR / "background.webp").as_posix()
@@ -1211,19 +1599,27 @@ class RadiocityApp(Gtk.ApplicationWindow):
         .row-selected.row-playing {{ background-color: #2f6b2f; color: #f2f2f2; }}
         .row-selected.row-playing label {{ color: #f2f2f2; }}
         .top-bar {{
-            min-height: 40px;
+            min-height: 36px;
             padding: 6px 10px;
-            background-color: rgba(245, 245, 245, 0.96);
+            background-color: rgba(0, 0, 0, 0.65);
             border-radius: 10px;
         }}
-        .menu-bar {{
-            background-color: rgba(245, 245, 245, 0.96);
-            padding: 4px 6px;
-            border-radius: 10px;
-        }}
-        .menu-bar label,
-        .menu-bar menuitem,
         .top-bar label {{
+            color: #f2f2f2;
+        }}
+        .preset-box {{
+            background-color: rgba(0, 0, 0, 0.6);
+            border-radius: 12px;
+            padding: 6px;
+        }}
+        .controls-box button {{
+            background-color: rgba(245, 245, 245, 0.95);
+            border-radius: 999px;
+            min-width: 40px;
+            min-height: 40px;
+        }}
+        .controls-box button label,
+        .controls-box button image {{
             color: #111111;
         }}
         .footer {{
@@ -1246,13 +1642,6 @@ class RadiocityApp(Gtk.ApplicationWindow):
         }}
         .footer .volume-accent {{
             color: #00ff66;
-        }}
-        .station-selector button {{
-            background-color: rgba(245, 245, 245, 0.95);
-            border-radius: 8px;
-        }}
-        .station-selector button image {{
-            color: #111111;
         }}
         .now-playing {{
             font-size: 48px;
@@ -1377,7 +1766,7 @@ class RadiocityApp(Gtk.ApplicationWindow):
                 for url in urls:
                     request = urllib.request.Request(
                         url,
-                        headers={"User-Agent": "Radiocity/1.0"},
+                        headers={"User-Agent": "Clarionet/1.0"},
                     )
                     try:
                         payload, insecure = open_url(
@@ -1447,7 +1836,7 @@ class RadiocityApp(Gtk.ApplicationWindow):
             try:
                 request = urllib.request.Request(
                     url,
-                    headers={"User-Agent": "Radiocity/1.0"},
+                    headers={"User-Agent": "Clarionet/1.0"},
                 )
                 max_bytes = 512 * 1024
                 data, _ = open_url(
@@ -1477,7 +1866,7 @@ class RadiocityApp(Gtk.ApplicationWindow):
         thread.start()
 
     def on_delete_event(self, *_):
-        self.hide()
+        self.quit_app()
         return True
 
     def quit_app(self):
@@ -1503,17 +1892,17 @@ class RadiocityApp(Gtk.ApplicationWindow):
         dialog.destroy()
 
 
-class RadiocityApplication(Gtk.Application):
+class ClarionetApplication(Gtk.Application):
     def __init__(self):
-        super().__init__(application_id="com.example.radiocity")
+        super().__init__(application_id="com.example.clarionet")
 
     def do_activate(self):
         logger.info("Start %s %s", APP_NAME, APP_VERSION)
-        window = RadiocityApp(self)
+        window = ClarionetApp(self)
         window.show_all()
 
 
 if __name__ == "__main__":
-    app = RadiocityApplication()
+    app = ClarionetApplication()
     exit_code = app.run(sys.argv)
     sys.exit(exit_code)
