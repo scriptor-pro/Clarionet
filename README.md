@@ -1,11 +1,11 @@
-# Radiocity
+# Clarionet
 
 Application Linux minimaliste pour ecouter des radios en ligne via GTK3 + mpv.
 
 ## Lancer
 
 ```bash
-python3 radiocity.py
+./clarionet
 ```
 
 ## Dependances
@@ -16,15 +16,15 @@ python3 radiocity.py
 
 ## Version
 
-0.1.7
+0.2.1
 
 ## Donnees
 
-Les fichiers sont stockes dans `~/.config/radiocity/` :
+Les fichiers sont stockes dans `~/.config/clarionet/` :
 
 - `radios.json` (id, name, stream_url)
 - `config.json` (volume, last_radio_id)
-- `radiocity.log`
+- `clarionet.log`
 
 ## Raccourcis
 
