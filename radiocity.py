@@ -16,7 +16,6 @@ import shutil
 import ssl
 import uuid
 import warnings
-import webbrowser
 import ctypes
 import ctypes.util
 
@@ -54,13 +53,9 @@ STATE_PAUSED = "paused"
 STATE_ERROR = "error"
 VOLUME_STEP = 1
 DIGITAL_FONT_PATH = (
-    ASSETS_DIR
-    / "fonts"
-    / "digital-readout"
-    / "TrueType"
-    / "SFDigitalReadout-Medium.ttf"
+    ASSETS_DIR / "fonts" / "digital-readout" / "OpenType" / "segment14.regular.otf"
 )
-DIGITAL_FONT_FAMILY = "SF Digital Readout"
+DIGITAL_FONT_FAMILY = "Segment14"
 
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
@@ -448,12 +443,21 @@ class ClarionetApp(Gtk.ApplicationWindow):
         geometry.min_height = self.fixed_height
         geometry.max_width = self.fixed_width
         geometry.max_height = self.fixed_height
+        geometry.base_width = self.fixed_width
+        geometry.base_height = self.fixed_height
+        geometry.width_inc = 1
+        geometry.height_inc = 1
         self.set_geometry_hints(
             self,
             geometry,
-            Gdk.WindowHints.MIN_SIZE | Gdk.WindowHints.MAX_SIZE,
+            Gdk.WindowHints.MIN_SIZE
+            | Gdk.WindowHints.MAX_SIZE
+            | Gdk.WindowHints.BASE_SIZE
+            | Gdk.WindowHints.RESIZE_INC,
         )
         self.set_border_width(16)
+        self.content_width = self.fixed_width - (self.get_border_width() * 2)
+        self.content_height = self.fixed_height - (self.get_border_width() * 2)
 
         self._set_window_icons()
         icon_path = ASSETS_DIR / "icons" / "clarionet_icon_32x32.png"
@@ -465,15 +469,19 @@ class ClarionetApp(Gtk.ApplicationWindow):
         self.current_label = Gtk.Label(label="-", xalign=0.5)
         self.current_label.set_ellipsize(Pango.EllipsizeMode.END)
         self.display_char_limit = 24
+        self.current_label.set_width_chars(self.display_char_limit)
         self.current_label.set_max_width_chars(self.display_char_limit)
+        self.current_label.set_line_wrap(False)
         self.track_label = Gtk.Label(label="-", xalign=0.5)
         self.track_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.track_label.set_width_chars(self.display_char_limit)
         self.track_label.set_max_width_chars(self.display_char_limit)
+        self.track_label.set_line_wrap(False)
         self.track_label.set_no_show_all(True)
         self.track_label.hide()
         self.marquee_tasks = {}
-        self.easter_timer_id = None
         self.size_lock_id = None
+        self.size_lock_interval = 100
 
         register_font(DIGITAL_FONT_PATH)
         self.get_style_context().add_class("app-window")
@@ -581,9 +589,14 @@ class ClarionetApp(Gtk.ApplicationWindow):
         self.station_display = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.station_display.set_hexpand(True)
         self.station_display.set_halign(Gtk.Align.FILL)
+        self.station_display.set_homogeneous(True)
+        self.current_label.set_valign(Gtk.Align.CENTER)
+        self.track_label.set_valign(Gtk.Align.START)
         self.station_display.pack_start(self.current_label, True, True, 0)
         self.station_display.pack_start(self.track_label, True, True, 0)
         self.station_display.get_style_context().add_class("now-playing-box")
+        self.station_display.set_size_request(self.content_width, -1)
+        self.update_display_alignment(False)
 
         self.play_button = Gtk.Button()
         self.pause_button = Gtk.Button()
@@ -646,8 +659,6 @@ class ClarionetApp(Gtk.ApplicationWindow):
         self.volume_value_label.get_style_context().add_class("volume-accent")
         self.volume_minus_button.get_style_context().add_class("volume-step")
         self.volume_plus_button.get_style_context().add_class("volume-step")
-        self.volume_minus_button.connect("clicked", self.on_volume_step, -VOLUME_STEP)
-        self.volume_plus_button.connect("clicked", self.on_volume_step, VOLUME_STEP)
         self.volume_minus_button.connect("pressed", self.on_volume_press, -VOLUME_STEP)
         self.volume_minus_button.connect("released", self.on_volume_release)
         self.volume_plus_button.connect("pressed", self.on_volume_press, VOLUME_STEP)
@@ -668,11 +679,55 @@ class ClarionetApp(Gtk.ApplicationWindow):
         self.preset_buttons = []
         self.preset_timers = {}
         self.preset_saved = set()
+        self.preset_button_height = 36
+        self.preset_button_width = int(self.preset_button_height * 1.618)
         self.preset_css_provider = Gtk.CssProvider()
         self.preset_css_provider.load_from_data(
             b"""
-            .preset-button { background-color: #000000; }
-            .preset-button:active { background-color: #111111; }
+            .preset-button {
+                background-color: #0c0c0c;
+                background-image: linear-gradient(
+                    to bottom,
+                    #2a2a2a 0%,
+                    #141414 45%,
+                    #090909 100%
+                );
+                border-radius: 10px;
+                border: 1px solid #2b2b2b;
+                box-shadow:
+                    inset 0 2px 0 rgba(255, 255, 255, 0.18),
+                    inset 0 -3px 0 rgba(0, 0, 0, 0.9),
+                    0 3px 6px rgba(0, 0, 0, 0.6);
+            }
+            .preset-button image {
+                color: #d48b39;
+            }
+            .preset-add {
+                padding: 6px 9px;
+            }
+            .preset-add image {
+                color: #d48b39;
+                -gtk-icon-transform: scale(1.2);
+            }
+            .preset-button:hover {
+                background-image: linear-gradient(
+                    to bottom,
+                    #323232 0%,
+                    #1b1b1b 45%,
+                    #0b0b0b 100%
+                );
+            }
+            .preset-button:active {
+                background-image: linear-gradient(
+                    to bottom,
+                    #0b0b0b 0%,
+                    #1b1b1b 55%,
+                    #2a2a2a 100%
+                );
+                box-shadow:
+                    inset 0 2px 4px rgba(0, 0, 0, 0.8),
+                    0 1px 2px rgba(0, 0, 0, 0.6);
+            }
             """
         )
         screen = Gdk.Screen.get_default()
@@ -685,10 +740,16 @@ class ClarionetApp(Gtk.ApplicationWindow):
         for index, label in enumerate(("1", "2", "3", "4", "5", "6")):
             button = Gtk.Button()
             button.set_relief(Gtk.ReliefStyle.NONE)
+            button.set_size_request(self.preset_button_width, self.preset_button_height)
             button.get_style_context().add_class("preset-button")
             button.get_style_context().add_provider(
                 self.preset_css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
             )
+            button.add_events(
+                Gdk.EventMask.ENTER_NOTIFY_MASK | Gdk.EventMask.LEAVE_NOTIFY_MASK
+            )
+            button.connect("enter-notify-event", self.on_preset_hover, index)
+            button.connect("leave-notify-event", self.on_preset_leave, index)
             drawing = Gtk.DrawingArea()
             drawing.set_hexpand(True)
             drawing.set_vexpand(True)
@@ -697,25 +758,37 @@ class ClarionetApp(Gtk.ApplicationWindow):
             button.connect("pressed", self.on_preset_pressed, index)
             button.connect("released", self.on_preset_released, index)
             self.preset_buttons.append(
-                {"button": button, "drawing": drawing, "text": label, "active": False}
+                {
+                    "button": button,
+                    "drawing": drawing,
+                    "text": label,
+                    "active": False,
+                    "hover": False,
+                    "marquee_id": None,
+                    "scroll_offset": 0,
+                    "scroll_text": "",
+                    "scroll_width": 0,
+                    "preset_name": None,
+                }
             )
             self.preset_box.pack_start(button, True, True, 0)
         self.add_station_button = self._build_add_station_button()
+        self.add_station_button.set_size_request(
+            self.preset_button_width, self.preset_button_height
+        )
         self.add_station_button.get_style_context().add_provider(
             self.preset_css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
         self.preset_box.pack_start(self.add_station_button, False, False, 0)
         self.preset_box.get_style_context().add_class("preset-box")
+        self.preset_box.set_size_request(self.content_width, -1)
 
         volume_box = Gtk.Box(spacing=8)
         self.volume_icon = Gtk.Image.new_from_icon_name(
             "audio-volume-high-symbolic", Gtk.IconSize.BUTTON
         )
-        self.volume_icon.add_events(
-            Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK
-        )
-        self.volume_icon.connect("button-press-event", self.on_easter_press)
-        self.volume_icon.connect("button-release-event", self.on_easter_release)
+        self.volume_icon.get_style_context().add_class("volume-icon")
+        self.volume_icon.set_size_request(40, 40)
         volume_box.pack_start(self.volume_icon, False, False, 0)
         volume_box.pack_start(self.volume_value_label, False, False, 0)
         volume_box.pack_start(self.volume_minus_button, False, False, 0)
@@ -725,6 +798,7 @@ class ClarionetApp(Gtk.ApplicationWindow):
         body_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
         body_box.pack_start(self.preset_box, False, False, 0)
         body_box.pack_start(self.station_display, False, False, 0)
+        body_box.set_size_request(self.content_width, -1)
 
         footer_box = Gtk.Box(spacing=16)
         footer_box.set_size_request(-1, 56)
@@ -736,6 +810,7 @@ class ClarionetApp(Gtk.ApplicationWindow):
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
         main_box.pack_start(body_box, True, True, 0)
         main_box.pack_start(footer_box, False, False, 0)
+        main_box.set_size_request(self.content_width, self.content_height)
 
         self.add(main_box)
 
@@ -745,7 +820,6 @@ class ClarionetApp(Gtk.ApplicationWindow):
         self.connect("delete-event", self.on_delete_event)
 
         self.tray = self._build_tray()
-        self._install_shortcuts()
         self._install_list_styles()
         self.mpv.start_event_listener(self.handle_mpv_event)
         self.connect("size-allocate", self.enforce_fixed_size)
@@ -808,30 +882,12 @@ class ClarionetApp(Gtk.ApplicationWindow):
 
         button = Gtk.MenuButton()
         button.set_image(
-            Gtk.Image.new_from_icon_name("list-add-symbolic", Gtk.IconSize.BUTTON)
+            Gtk.Image.new_from_icon_name("list-add-symbolic", Gtk.IconSize.DIALOG)
         )
         button.set_popup(menu)
         button.get_style_context().add_class("preset-button")
         button.get_style_context().add_class("preset-add")
         return button
-
-    def _install_shortcuts(self):
-        accel_group = Gtk.AccelGroup()
-        self.add_accel_group(accel_group)
-        for widget, combo in (
-            (self.play_button, "space"),
-            (self.stop_button, "s"),
-        ):
-            keyval, modifier = Gtk.accelerator_parse(combo)
-            widget.add_accelerator(
-                "clicked", accel_group, keyval, modifier, Gtk.AccelFlags.VISIBLE
-            )
-        for callback, combo in (
-            (lambda *_: self.on_add(None), "<Control>n"),
-            (lambda *_: self.quit_app(), "<Control>q"),
-        ):
-            keyval, modifier = Gtk.accelerator_parse(combo)
-            accel_group.connect(keyval, modifier, Gtk.AccelFlags.VISIBLE, callback)
 
     def restore_selection(self):
         last_radio_id = self.config.get("last_radio_id")
@@ -862,6 +918,7 @@ class ClarionetApp(Gtk.ApplicationWindow):
             self.playing_name = None
             self.track_label.set_text("-")
             self.track_label.hide()
+            self.update_display_alignment(False)
             self.update_marquee(self.track_label)
             if state == STATE_IDLE and self.selected_row:
                 self.current_label.set_text(self.selected_row.name)
@@ -977,14 +1034,25 @@ class ClarionetApp(Gtk.ApplicationWindow):
                 return
             if payload.get("name") == "media-title":
                 title = (payload.get("data") or "").strip()
-                if title:
+                if title and not self.is_stream_filename(title):
                     GLib.idle_add(self.track_label.set_text, title)
                     GLib.idle_add(self.track_label.show)
+                    GLib.idle_add(self.update_display_alignment, True)
                     GLib.idle_add(self.schedule_marquee_now, self.track_label, title)
                 else:
                     GLib.idle_add(self.track_label.hide)
                     GLib.idle_add(self.track_label.set_text, "-")
+                    GLib.idle_add(self.update_display_alignment, False)
                 GLib.idle_add(self.update_marquee, self.track_label)
+
+    def is_stream_filename(self, title):
+        lower = title.lower().strip()
+        extensions = (".m3u8", ".mp3", ".aac", ".ogg", ".opus", ".m4a", ".flac")
+        if lower.startswith(("http://", "https://")):
+            return True
+        if "://" in lower:
+            return True
+        return lower.endswith(extensions)
 
     def on_window_key_press(self, _, event):
         if event.keyval == Gdk.KEY_Left:
@@ -1062,14 +1130,30 @@ class ClarionetApp(Gtk.ApplicationWindow):
         self.update_marquee(self.current_label)
         self.update_marquee(self.track_label)
 
-    def enforce_fixed_size(self, *_):
-        self.resize(self.fixed_width, self.fixed_height)
+    def update_display_alignment(self, has_metadata):
+        self.current_label.set_valign(
+            Gtk.Align.START if has_metadata else Gtk.Align.CENTER
+        )
+        self.track_label.set_valign(Gtk.Align.START)
+        self.station_display.queue_resize()
+
+    def enforce_fixed_size(self, widget, allocation):
+        if (
+            allocation.width != self.fixed_width
+            or allocation.height != self.fixed_height
+        ):
+            self.resize(self.fixed_width, self.fixed_height)
+        child = self.get_child()
+        if child:
+            child.set_size_request(self.content_width, self.content_height)
         return False
 
     def on_map_event(self, *_):
         GLib.idle_add(self.resize, self.fixed_width, self.fixed_height)
         if self.size_lock_id is None:
-            self.size_lock_id = GLib.timeout_add(250, self.ensure_size_locked)
+            self.size_lock_id = GLib.timeout_add(
+                self.size_lock_interval, self.ensure_size_locked
+            )
         return False
 
     def on_realize(self, *_):
@@ -1084,28 +1168,13 @@ class ClarionetApp(Gtk.ApplicationWindow):
     def ensure_size_locked(self):
         width, height = self.get_size()
         if width != self.fixed_width or height != self.fixed_height:
+            self.set_default_size(self.fixed_width, self.fixed_height)
+            self.set_size_request(self.fixed_width, self.fixed_height)
             self.resize(self.fixed_width, self.fixed_height)
+            window = self.get_window()
+            if window:
+                window.resize(self.fixed_width, self.fixed_height)
         return True
-
-    def on_easter_press(self, *_):
-        if int(self.volume_scale.get_value()) != 21:
-            return False
-        if self.easter_timer_id is not None:
-            GLib.source_remove(self.easter_timer_id)
-        self.easter_timer_id = GLib.timeout_add(1500, self.open_easter_egg)
-        return True
-
-    def on_easter_release(self, *_):
-        if self.easter_timer_id is not None:
-            GLib.source_remove(self.easter_timer_id)
-            self.easter_timer_id = None
-        return True
-
-    def open_easter_egg(self):
-        self.easter_timer_id = None
-        if int(self.volume_scale.get_value()) == 21:
-            webbrowser.open("https://fr.wikipedia.org/wiki/Radio_Cit%C3%A9_(Bruxelles)")
-        return False
 
     def on_preset_draw(self, widget, cr, index):
         entry = self.preset_buttons[index]
@@ -1114,21 +1183,41 @@ class ClarionetApp(Gtk.ApplicationWindow):
         cr.rectangle(0, 0, alloc.width, alloc.height)
         cr.fill()
 
-        color = (0.0, 1.0, 0.4) if entry["active"] else (0.95, 0.95, 0.95)
+        color = (0.83, 0.55, 0.22) if entry["active"] else (0.95, 0.95, 0.95)
         cr.set_source_rgb(*color)
 
-        layout = widget.create_pango_layout(entry["text"])
-        layout.set_ellipsize(Pango.EllipsizeMode.END)
-        layout.set_alignment(Pango.Alignment.CENTER)
-        layout.set_width(max(1, (alloc.width - 16)) * Pango.SCALE)
-        font = Pango.FontDescription("Sans Bold 10")
-        layout.set_font_description(font)
+        font = Pango.FontDescription(f"{DIGITAL_FONT_FAMILY} 18")
 
-        text_width, text_height = layout.get_pixel_size()
-        x = 0
-        y = max(0, int((alloc.height - text_height) / 2))
-        cr.move_to(x, y)
-        PangoCairo.show_layout(cr, layout)
+        if entry["hover"]:
+            text = entry["scroll_text"] or self.get_preset_hover_text(entry)
+            layout = widget.create_pango_layout(text)
+            layout.set_alignment(Pango.Alignment.CENTER)
+            layout.set_ellipsize(Pango.EllipsizeMode.NONE)
+            layout.set_font_description(font)
+            text_width, text_height = layout.get_pixel_size()
+            if text_width:
+                entry["scroll_width"] = text_width
+            offset = entry.get("scroll_offset", 0)
+            y = max(0, int((alloc.height - text_height) / 2))
+            cr.save()
+            cr.rectangle(0, 0, alloc.width, alloc.height)
+            cr.clip()
+            cr.move_to(-offset, y)
+            PangoCairo.show_layout(cr, layout)
+            if text_width:
+                cr.move_to(text_width - offset, y)
+                PangoCairo.show_layout(cr, layout)
+            cr.restore()
+        else:
+            layout = widget.create_pango_layout(entry["text"])
+            layout.set_ellipsize(Pango.EllipsizeMode.END)
+            layout.set_alignment(Pango.Alignment.CENTER)
+            layout.set_width(max(1, alloc.width) * Pango.SCALE)
+            layout.set_font_description(font)
+            text_width, text_height = layout.get_pixel_size()
+            y = max(0, int((alloc.height - text_height) / 2))
+            cr.move_to(0, y)
+            PangoCairo.show_layout(cr, layout)
 
         return False
 
@@ -1154,13 +1243,15 @@ class ClarionetApp(Gtk.ApplicationWindow):
                 task_id = state.get(key)
                 if task_id:
                     GLib.source_remove(task_id)
-        GLib.timeout_add(100, self.start_marquee_now, label, text)
+        GLib.timeout_add(150, self.start_marquee_now, label, text, 0)
         return False
 
-    def start_marquee_now(self, label, text):
-        if not self.label_overflows(label):
+    def start_marquee_now(self, label, text, attempt):
+        if self.label_overflows(label) or len(text) > self.display_char_limit:
+            self.start_marquee(label, text)
             return False
-        self.start_marquee(label, text)
+        if attempt < 5:
+            GLib.timeout_add(150, self.start_marquee_now, label, text, attempt + 1)
         return False
 
     def label_overflows(self, label):
@@ -1204,13 +1295,14 @@ class ClarionetApp(Gtk.ApplicationWindow):
         presets = self.config.get("presets", [None] * 6)
         for index, entry in enumerate(self.preset_buttons):
             preset_id = presets[index] if index < len(presets) else None
+            entry["preset_name"] = None
             if preset_id:
                 radio = next(
                     (item for item in self.radios if item["id"] == preset_id), None
                 )
-                entry["text"] = radio["name"] if radio else str(index + 1)
-            else:
-                entry["text"] = str(index + 1)
+                if radio:
+                    entry["preset_name"] = radio["name"]
+            entry["text"] = str(index + 1)
             entry["drawing"].queue_draw()
         self.update_preset_styles()
 
@@ -1232,6 +1324,43 @@ class ClarionetApp(Gtk.ApplicationWindow):
             preset_id = presets[index] if index < len(presets) else None
             entry["active"] = bool(preset_id and preset_id == active_id)
             entry["drawing"].queue_draw()
+
+    def get_preset_hover_text(self, entry):
+        return entry.get("preset_name") or "+ station"
+
+    def on_preset_hover(self, _widget, _event, index):
+        entry = self.preset_buttons[index]
+        entry["hover"] = True
+        entry["scroll_offset"] = 0
+        entry["scroll_text"] = f"{self.get_preset_hover_text(entry)}   "
+        entry["scroll_width"] = 0
+        if entry["marquee_id"] is None:
+            entry["marquee_id"] = GLib.timeout_add(120, self.tick_preset_marquee, index)
+        entry["drawing"].queue_draw()
+        return False
+
+    def on_preset_leave(self, _widget, _event, index):
+        entry = self.preset_buttons[index]
+        entry["hover"] = False
+        if entry["marquee_id"] is not None:
+            GLib.source_remove(entry["marquee_id"])
+            entry["marquee_id"] = None
+        entry["scroll_offset"] = 0
+        entry["scroll_text"] = ""
+        entry["drawing"].queue_draw()
+        return False
+
+    def tick_preset_marquee(self, index):
+        entry = self.preset_buttons[index]
+        if not entry["hover"]:
+            entry["marquee_id"] = None
+            return False
+        if entry["scroll_width"] <= 0:
+            entry["drawing"].queue_draw()
+            return True
+        entry["scroll_offset"] = (entry["scroll_offset"] + 2) % entry["scroll_width"]
+        entry["drawing"].queue_draw()
+        return True
 
     def on_preset_pressed(self, _, index):
         if index in self.preset_timers:
@@ -1613,14 +1742,36 @@ class ClarionetApp(Gtk.ApplicationWindow):
             padding: 6px;
         }}
         .controls-box button {{
-            background-color: rgba(245, 245, 245, 0.95);
+            background-color: #0c0c0c;
+            background-image: linear-gradient(
+                to bottom,
+                #2a2a2a 0%,
+                #141414 45%,
+                #090909 100%
+            );
             border-radius: 999px;
+            border: 1px solid #2b2b2b;
+            box-shadow:
+                inset 0 2px 0 rgba(255, 255, 255, 0.18),
+                inset 0 -3px 0 rgba(0, 0, 0, 0.9),
+                0 3px 6px rgba(0, 0, 0, 0.6);
             min-width: 40px;
             min-height: 40px;
         }}
+        .controls-box button:active {{
+            background-image: linear-gradient(
+                to bottom,
+                #0b0b0b 0%,
+                #1b1b1b 55%,
+                #2a2a2a 100%
+            );
+            box-shadow:
+                inset 0 2px 4px rgba(0, 0, 0, 0.8),
+                0 1px 2px rgba(0, 0, 0, 0.6);
+        }}
         .controls-box button label,
         .controls-box button image {{
-            color: #111111;
+            color: #d48b39;
         }}
         .footer {{
             min-height: 56px;
@@ -1633,20 +1784,46 @@ class ClarionetApp(Gtk.ApplicationWindow):
             color: #f2f2f2;
         }}
         .footer button {{
-            background-color: rgba(245, 245, 245, 0.95);
-            border-radius: 8px;
+            background-color: #0c0c0c;
+            background-image: linear-gradient(
+                to bottom,
+                #2a2a2a 0%,
+                #141414 45%,
+                #090909 100%
+            );
+            border-radius: 10px;
+            border: 1px solid #2b2b2b;
+            box-shadow:
+                inset 0 2px 0 rgba(255, 255, 255, 0.18),
+                inset 0 -3px 0 rgba(0, 0, 0, 0.9),
+                0 3px 6px rgba(0, 0, 0, 0.6);
+        }}
+        .footer button:active {{
+            background-image: linear-gradient(
+                to bottom,
+                #0b0b0b 0%,
+                #1b1b1b 55%,
+                #2a2a2a 100%
+            );
+            box-shadow:
+                inset 0 2px 4px rgba(0, 0, 0, 0.8),
+                0 1px 2px rgba(0, 0, 0, 0.6);
         }}
         .footer button label,
         .footer button image {{
-            color: #111111;
+            color: #d48b39;
         }}
         .footer .volume-accent {{
-            color: #00ff66;
+            color: #d48b39;
         }}
         .now-playing {{
             font-size: 48px;
             font-family: "{DIGITAL_FONT_FAMILY}";
-            color: #00ff66;
+            color: #d48b39;
+            text-shadow:
+                0 0 4px rgba(212, 139, 57, 0.7),
+                0 0 10px rgba(212, 139, 57, 0.5),
+                0 0 18px rgba(212, 139, 57, 0.35);
         }}
         .now-playing-box {{
             background-color: #000000;
@@ -1654,6 +1831,9 @@ class ClarionetApp(Gtk.ApplicationWindow):
             padding: 12px 18px;
             min-width: 260px;
             min-height: 160px;
+        }}
+        .volume-icon {{
+            color: #d48b39;
         }}
         .state-label {{ font-size: 14px; font-weight: 600; }}
         .volume-step {{ font-weight: 700; min-width: 36px; min-height: 36px; }}
@@ -1663,7 +1843,7 @@ class ClarionetApp(Gtk.ApplicationWindow):
             font-size: 40px;
             font-family: "{DIGITAL_FONT_FAMILY}";
         }}
-        .volume-accent {{ color: #00ff66; }}
+        .volume-accent {{ color: #d48b39; }}
 
         window.app-window {{
             background-image: url("file://{background_image}");
