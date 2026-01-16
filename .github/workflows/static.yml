@@ -25,6 +25,9 @@ jobs:
   # Build job
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: page
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,16 +37,10 @@ jobs:
         with:
           ruby-version: '3.3'
           bundler-cache: true
-
-      - name: Install dependencies
-        run: |
-          cd page
-          bundle install
+          working-directory: page
 
       - name: Build site
-        run: |
-          cd page
-          bundle exec jekyll build
+        run: bundle exec jekyll build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
