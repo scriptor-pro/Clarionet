@@ -1,0 +1,46 @@
+# Site settings
+title: Clarionet
+description: Minimalist Linux radio player with autoradio-style interface
+lang: fr
+baseurl: "/Clarionet" # e.g., /Clarionet/
+url: "https://scriptor-pro.github.io" # base hostname & protocol
+
+# Build settings
+markdown: kramdown
+theme: minima
+plugins:
+  - jekyll-seo-tag
+  - jekyll-sitemap
+
+# Exclude from processing
+exclude:
+  - README.md
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor/bundle/
+
+# Language settings
+languages:
+  - fr
+  - en
+
+# Version
+version: "0.2.1"
+
+# Social
+github_username: scriptor-pro
+github_repo: Clarionet
+
+# Collections
+collections:
+  posts:
+    output: false
+
+# Defaults
+defaults:
+  - scope:
+      path: ""
+      type: "pages"
+    values:
+      layout: "page"
