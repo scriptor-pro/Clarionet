@@ -38,12 +38,12 @@ jobs:
       - name: Install dependencies
         run: |
           cd page
-          gem install jekyll jekyll-seo-tag jekyll-sitemap minima
+          bundle install
 
       - name: Build site
         run: |
           cd page
-          jekyll build
+          bundle exec jekyll build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
