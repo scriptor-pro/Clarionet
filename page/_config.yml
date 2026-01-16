@@ -2,7 +2,7 @@
 title: Clarionet
 description: Minimalist Linux radio player with autoradio-style interface
 lang: fr
-baseurl: "" # e.g., /Clarionet/
+baseurl: "/Clarionet" # e.g., /Clarionet/
 url: "https://scriptor-pro.github.io" # base hostname & protocol
 
 # Build settings
