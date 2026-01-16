@@ -1,0 +1,77 @@
+<header class="site-header">
+  <div class="container header-container">
+    <div class="header-left">
+      <a href="{{ '/' | prepend: site.baseurl }}" class="logo">
+        <span class="logo-icon">📻</span>
+        <span class="logo-text">Clarionet</span>
+      </a>
+    </div>
+
+    <div class="header-right">
+      <nav class="lang-switcher">
+        <button
+          class="lang-btn active"
+          data-lang="fr"
+          onclick="setLanguage('fr')"
+          aria-label="Français">
+          FR
+        </button>
+        <span class="lang-divider">|</span>
+        <button
+          class="lang-btn"
+          data-lang="en"
+          onclick="setLanguage('en')"
+          aria-label="English">
+          EN
+        </button>
+      </nav>
+
+      <nav class="main-nav">
+        <a href="#install" class="nav-link fr">Installer</a>
+        <a href="#install" class="nav-link en">Install</a>
+        <a href="#shortcuts" class="nav-link fr">Raccourcis</a>
+        <a href="#shortcuts" class="nav-link en">Shortcuts</a>
+        <a href="#philosophy" class="nav-link fr">Philosophie</a>
+        <a href="#philosophy" class="nav-link en">Philosophy</a>
+        <a href="https://github.com/{{ site.github_username }}/{{ site.github_repo }}" class="nav-link nav-external">
+          GitHub
+        </a>
+      </nav>
+    </div>
+  </div>
+</header>
+
+<script>
+  function setLanguage(lang) {
+    document.querySelectorAll('.lang-btn').forEach(btn => {
+      btn.classList.remove('active');
+      if (btn.dataset.lang === lang) {
+        btn.classList.add('active');
+      }
+    });
+
+    const allFr = document.querySelectorAll('.fr');
+    const allEn = document.querySelectorAll('.en');
+
+    if (lang === 'fr') {
+      allFr.forEach(el => el.style.display = '');
+      allEn.forEach(el => el.style.display = 'none');
+      document.documentElement.lang = 'fr';
+      localStorage.setItem('clarionet-lang', 'fr');
+    } else {
+      allFr.forEach(el => el.style.display = 'none');
+      allEn.forEach(el => el.style.display = '');
+      document.documentElement.lang = 'en';
+      localStorage.setItem('clarionet-lang', 'en');
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const savedLang = localStorage.getItem('clarionet-lang');
+    if (savedLang && (savedLang === 'fr' || savedLang === 'en')) {
+      setLanguage(savedLang);
+    } else {
+      setLanguage('fr');
+    }
+  });
+</script>
