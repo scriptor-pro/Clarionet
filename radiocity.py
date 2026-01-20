@@ -409,6 +409,7 @@ class RadioRow(Gtk.ListBoxRow):
         self.favicon_url = favicon
         self.icon = Gtk.Image.new_from_icon_name("audio-x-generic", Gtk.IconSize.MENU)
         label = Gtk.Label(label=name, xalign=0)
+        self.label = label
 
         box = Gtk.Box(spacing=8)
         box.pack_start(self.icon, False, False, 0)
@@ -772,14 +773,14 @@ class ClarionetApp(Gtk.ApplicationWindow):
                 }
             )
             self.preset_box.pack_start(button, True, True, 0)
-        self.add_station_button = self._build_add_station_button()
-        self.add_station_button.set_size_request(
+        self.edit_station_button = self._build_edit_station_button()
+        self.edit_station_button.set_size_request(
             self.preset_button_width, self.preset_button_height
         )
-        self.add_station_button.get_style_context().add_provider(
+        self.edit_station_button.get_style_context().add_provider(
             self.preset_css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
-        self.preset_box.pack_start(self.add_station_button, False, False, 0)
+        self.preset_box.pack_start(self.edit_station_button, False, False, 0)
         self.preset_box.get_style_context().add_class("preset-box")
         self.preset_box.set_size_request(self.content_width, -1)
 
@@ -867,26 +868,19 @@ class ClarionetApp(Gtk.ApplicationWindow):
         tray.connect("popup-menu", self.on_tray_menu)
         return tray
 
-    def _build_add_station_button(self):
-        menu = Gtk.Menu()
-
-        add_stream_item = Gtk.MenuItem(label="Ajouter une radio")
-        add_browser_item = Gtk.MenuItem(label="Importer Radio-Browser")
-
-        add_stream_item.connect("activate", lambda *_: self.on_add(None))
-        add_browser_item.connect("activate", lambda *_: self.on_add_browser())
-
-        menu.append(add_stream_item)
-        menu.append(add_browser_item)
-        menu.show_all()
-
-        button = Gtk.MenuButton()
-        button.set_image(
-            Gtk.Image.new_from_icon_name("list-add-symbolic", Gtk.IconSize.DIALOG)
-        )
-        button.set_popup(menu)
+    def _build_edit_station_button(self):
+        button = Gtk.Button()
+        icon_path = ASSETS_DIR / "icons" / "radio_tower.svg"
+        icon = Gtk.Image.new_from_file(str(icon_path))
+        icon.set_margin_start(2)
+        icon.set_margin_end(2)
+        icon.set_margin_top(8)
+        icon.set_margin_bottom(8)
+        button.set_image(icon)
+        button.set_tooltip_text("Editer la liste")
         button.get_style_context().add_class("preset-button")
         button.get_style_context().add_class("preset-add")
+        button.connect("clicked", self.on_edit_station_list)
         return button
 
     def restore_selection(self):
@@ -1043,7 +1037,6 @@ class ClarionetApp(Gtk.ApplicationWindow):
                     GLib.idle_add(self.track_label.hide)
                     GLib.idle_add(self.track_label.set_text, "-")
                     GLib.idle_add(self.update_display_alignment, False)
-                GLib.idle_add(self.update_marquee, self.track_label)
 
     def is_stream_filename(self, title):
         lower = title.lower().strip()
@@ -1428,8 +1421,182 @@ class ClarionetApp(Gtk.ApplicationWindow):
             return
         self.on_play(None)
 
-    def on_add(self, _):
-        dialog = Gtk.Dialog(title="Ajouter une radio", parent=self, flags=0)
+    def on_edit_station_list(self, *_):
+        dialog = Gtk.Dialog(title="Editer la liste", parent=self, flags=0)
+        dialog.add_button("Fermer", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Enregistrer", Gtk.ResponseType.OK)
+        dialog.set_default_size(560, 520)
+
+        content = dialog.get_content_area()
+        content.set_spacing(12)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.get_style_context().add_class("edit-dialog")
+
+        title_label = Gtk.Label(label="Editer la liste des radios", xalign=0)
+        title_label.get_style_context().add_class("dialog-title")
+        content.add(title_label)
+
+        actions_box = Gtk.Box(spacing=8)
+        actions_box.get_style_context().add_class("edit-actions")
+        add_manual_button = Gtk.Button(label="Ajouter une radio")
+        add_browser_button = Gtk.Button(label="Importer Radio-Browser")
+        add_manual_button.get_style_context().add_class("edit-action-button")
+        add_browser_button.get_style_context().add_class("edit-action-button")
+        actions_box.pack_start(add_manual_button, False, False, 0)
+        actions_box.pack_start(add_browser_button, False, False, 0)
+        content.add(actions_box)
+
+        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        content.add(separator)
+
+        list_box = Gtk.ListBox()
+        list_box.set_selection_mode(Gtk.SelectionMode.NONE)
+        list_box.get_style_context().add_class("edit-list")
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_vexpand(True)
+        scrolled.set_min_content_height(260)
+        scrolled.add(list_box)
+        content.add(scrolled)
+
+        removed_ids = set()
+
+        def on_delete_clicked(_button, row):
+            confirm = Gtk.MessageDialog(
+                parent=dialog,
+                flags=0,
+                message_type=Gtk.MessageType.QUESTION,
+                buttons=Gtk.ButtonsType.NONE,
+                text="Supprimer cette radio ?",
+            )
+            confirm.add_button("Annuler", Gtk.ResponseType.CANCEL)
+            confirm.add_button("Supprimer", Gtk.ResponseType.OK)
+            response = confirm.run()
+            confirm.destroy()
+            if response != Gtk.ResponseType.OK:
+                return
+            removed_ids.add(row.radio_id)
+            list_box.remove(row)
+
+        def refresh_list():
+            for child in list_box.get_children():
+                list_box.remove(child)
+            radios = sorted(self.radios, key=lambda item: item["name"].lower())
+            for radio in radios:
+                if radio["id"] in removed_ids:
+                    continue
+                row = Gtk.ListBoxRow()
+                row.radio_id = radio["id"]
+
+                name_entry = Gtk.Entry()
+                name_entry.set_text(radio["name"])
+                name_entry.get_style_context().add_class("edit-entry")
+                row.name_entry = name_entry
+
+                url_label = Gtk.Label(label=radio.get("stream_url", ""), xalign=0)
+                url_label.set_ellipsize(Pango.EllipsizeMode.END)
+                url_label.set_hexpand(True)
+                url_label.get_style_context().add_class("edit-url")
+
+                info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                info_box.pack_start(name_entry, False, False, 0)
+                info_box.pack_start(url_label, False, False, 0)
+
+                delete_button = Gtk.Button()
+                delete_button.set_image(
+                    Gtk.Image.new_from_icon_name(
+                        "user-trash-symbolic", Gtk.IconSize.BUTTON
+                    )
+                )
+                delete_button.set_relief(Gtk.ReliefStyle.NONE)
+                delete_button.set_tooltip_text("Supprimer")
+                delete_button.connect("clicked", on_delete_clicked, row)
+
+                row_box = Gtk.Box(spacing=8)
+                row_box.set_margin_start(8)
+                row_box.set_margin_end(8)
+                row_box.set_margin_top(6)
+                row_box.set_margin_bottom(6)
+                row_box.get_style_context().add_class("edit-row")
+                row_box.pack_start(info_box, True, True, 0)
+                row_box.pack_start(delete_button, False, False, 0)
+                row.add(row_box)
+                list_box.add(row)
+            list_box.show_all()
+
+        def add_manual(_button):
+            self.on_add(parent=dialog)
+            refresh_list()
+
+        def add_browser(_button):
+            self.on_add_browser(parent=dialog)
+            refresh_list()
+
+        add_manual_button.connect("clicked", add_manual)
+        add_browser_button.connect("clicked", add_browser)
+
+        refresh_list()
+        content.show_all()
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            updated = False
+            removed = False
+            radios_by_id = {radio["id"]: radio for radio in self.radios}
+
+            for radio_id in list(removed_ids):
+                self.remove_radio_by_id(radio_id)
+                removed = True
+
+            for row in list_box.get_children():
+                radio = radios_by_id.get(row.radio_id)
+                if not radio:
+                    continue
+                new_name = row.name_entry.get_text().strip()
+                if new_name and new_name != radio["name"]:
+                    radio["name"] = new_name
+                    updated = True
+                    main_row = next(
+                        (
+                            child
+                            for child in self.listbox.get_children()
+                            if child.radio_id == row.radio_id
+                        ),
+                        None,
+                    )
+                    if main_row:
+                        main_row.name = new_name
+                        main_row.label.set_text(new_name)
+
+            if updated:
+                save_json(RADIOS_PATH, self.radios)
+                self.listbox.invalidate_sort()
+                self.listbox.show_all()
+                self.refresh_row_styles()
+                if self.selected_row:
+                    self.current_label.set_text(self.selected_row.name)
+                    self.update_marquee(self.current_label)
+                if self.playing_id:
+                    playing_row = next(
+                        (
+                            child
+                            for child in self.listbox.get_children()
+                            if child.radio_id == self.playing_id
+                        ),
+                        None,
+                    )
+                    if playing_row:
+                        self.playing_name = playing_row.name
+
+            if updated or removed:
+                self.refresh_preset_labels()
+
+        dialog.destroy()
+
+    def on_add(self, *_, parent=None):
+        dialog_parent = parent or self
+        dialog = Gtk.Dialog(title="Ajouter une radio", parent=dialog_parent, flags=0)
         dialog.add_button("Annuler", Gtk.ResponseType.CANCEL)
         dialog.add_button("Ajouter", Gtk.ResponseType.OK)
 
@@ -1452,8 +1619,9 @@ class ClarionetApp(Gtk.ApplicationWindow):
                 self.add_radios([{"name": name, "stream_url": url}])
         dialog.destroy()
 
-    def on_add_browser(self):
-        dialog = Gtk.Dialog(title="Importer une radio", parent=self, flags=0)
+    def on_add_browser(self, *_, parent=None):
+        dialog_parent = parent or self
+        dialog = Gtk.Dialog(title="Importer une radio", parent=dialog_parent, flags=0)
         dialog.add_button("Annuler", Gtk.ResponseType.CANCEL)
         dialog.add_button("Ajouter", Gtk.ResponseType.OK)
         dialog.set_default_size(520, 480)
@@ -1560,14 +1728,23 @@ class ClarionetApp(Gtk.ApplicationWindow):
                 self.add_radios(selected)
         dialog.destroy()
 
-    def on_remove(self, _):
-        row = self.listbox.get_selected_row()
+    def remove_radio_by_id(self, radio_id):
+        row = next(
+            (
+                child
+                for child in self.listbox.get_children()
+                if child.radio_id == radio_id
+            ),
+            None,
+        )
         if not row:
             return
         if row.radio_id == self.playing_id:
             self.on_stop(None)
             self.playing_id = None
             self.playing_name = None
+        if self.selected_row == row:
+            self.selected_row = None
         self.listbox.remove(row)
         self.radios = [radio for radio in self.radios if radio["id"] != row.radio_id]
         if self.config.get("last_radio_id") == row.radio_id:
@@ -1576,6 +1753,13 @@ class ClarionetApp(Gtk.ApplicationWindow):
         save_json(RADIOS_PATH, self.radios)
         self.current_label.set_text("-")
         self.refresh_row_styles()
+        self.refresh_preset_labels()
+
+    def on_remove(self, _):
+        row = self.listbox.get_selected_row()
+        if not row:
+            return
+        self.remove_radio_by_id(row.radio_id)
 
     def on_play(self, _):
         row = self.listbox.get_selected_row()
@@ -1844,6 +2028,24 @@ class ClarionetApp(Gtk.ApplicationWindow):
             font-family: "{DIGITAL_FONT_FAMILY}";
         }}
         .volume-accent {{ color: #d48b39; }}
+        .edit-dialog .dialog-title {{
+            font-weight: 600;
+            font-size: 16px;
+        }}
+        .edit-dialog .edit-actions button {{
+            border-radius: 999px;
+            padding: 6px 12px;
+        }}
+        .edit-dialog .edit-entry {{
+            min-height: 30px;
+        }}
+        .edit-dialog .edit-url {{
+            color: #8a8a8a;
+            font-size: 12px;
+        }}
+        .edit-dialog .edit-row button {{
+            background: transparent;
+        }}
 
         window.app-window {{
             background-image: url("file://{background_image}");
