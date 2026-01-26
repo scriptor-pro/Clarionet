@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import logging
+from logging.handlers import TimedRotatingFileHandler
 import os
 import signal
 import socket
@@ -16,6 +17,7 @@ import shutil
 import ssl
 import uuid
 import warnings
+import os
 import ctypes
 import ctypes.util
 
@@ -58,12 +60,19 @@ DIGITAL_FONT_PATH = (
 DIGITAL_FONT_FAMILY = "Segment14"
 
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-logging.basicConfig(
-    filename=str(LOG_PATH),
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.ERROR)
+logger.propagate = False
+
+if not logger.handlers:
+    handler = TimedRotatingFileHandler(
+        filename=str(LOG_PATH),
+        when="midnight",
+        backupCount=1,
+        encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(handler)
 
 warnings.filterwarnings(
     "ignore",
@@ -268,6 +277,24 @@ def favicon_url(url):
     return f"{scheme}://{host}/favicon.ico"
 
 
+def clear_log_periodically(log_path, max_size_bytes=1024 * 1024):
+    """
+    Clear log file if it exceeds max size
+    :param log_path: Path to the log file
+    :param max_size_bytes: Maximum log file size before clearing
+    """
+    try:
+        if log_path.exists():
+            file_size = log_path.stat().st_size
+            if file_size > max_size_bytes:
+                log_path.unlink()  # Delete file if too large
+                logger.info(
+                    f"Cleared log file {log_path} due to size {file_size} bytes"
+                )
+    except Exception as e:
+        logger.error(f"Error clearing log file: {e}")
+
+
 class MpvController:
     def __init__(self, socket_path):
         self.socket_path = socket_path
@@ -277,40 +304,106 @@ class MpvController:
         self.stop_event = threading.Event()
 
     def _ensure_process(self):
+        # Check if process exists and is running
         if self.process and self.process.poll() is None:
             return
+
+        # Ensure config directory exists
+        self.socket_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Remove any existing socket file
         if self.socket_path.exists():
-            self.socket_path.unlink()
+            try:
+                self.socket_path.unlink()
+            except Exception as e:
+                logger.warning(f"Failed to remove existing socket file: {e}")
+
+        # MPV command with robust socket handling
         cmd = [
             "mpv",
             "--no-terminal",
             "--idle=yes",
+            "--force-window=no",
+            "--audio-display=no",
+            "--video=no",
             f"--input-ipc-server={self.socket_path}",
             f"--log-file={MPV_LOG_PATH}",
-            "--msg-level=all=warn",
+            "--msg-level=all=error",  # Only log errors
         ]
         try:
+            # Start mpv process
             self.process = subprocess.Popen(cmd)
+
+            # Wait for process to start, but don't strictly require socket file
+            time.sleep(0.5)  # Give mpv a moment to start
+
+            # Check process status
+            if self.process.poll() is not None:
+                logger.error("MPV process terminated immediately")
+                raise RuntimeError("MPV process failed to start")
+
         except FileNotFoundError:
+            logger.error("MPV is not installed")
             raise RuntimeError("mpv n'est pas disponible sur ce systeme")
+        except Exception as e:
+            logger.error(f"MPV process start failed: {e}")
+            raise
+
+        # Log process details for debugging
+        logger.info(f"MPV process started with PID: {self.process.pid}")
 
     def _send(self, command):
-        self._ensure_process()
-        message = json.dumps(command).encode("utf-8") + b"\n"
+        # Robust send method with enhanced error handling
         last_error = None
-        for _ in range(5):
-            sock = socket.socket(socket.AF_UNIX)
+        max_attempts = 3  # Reduced attempts to avoid long delays
+
+        for attempt in range(max_attempts):
             try:
-                sock.connect(str(self.socket_path))
-                sock.sendall(message)
-                return
-            except OSError as exc:
-                last_error = exc
-                time.sleep(0.1)
-            finally:
-                sock.close()
+                # Ensure process is running
+                if not self.process or self.process.poll() is not None:
+                    self._ensure_process()
+
+                # Try to create socket
+                sock = socket.socket(socket.AF_UNIX)
+                try:
+                    # If socket file doesn't exist, start process and retry
+                    if not self.socket_path.exists():
+                        logger.warning(
+                            f"Socket file {self.socket_path} does not exist. Restarting process."
+                        )
+                        self._ensure_process()
+
+                    sock.connect(str(self.socket_path))
+                    message = json.dumps(command).encode("utf-8") + b"\n"
+                    sock.sendall(message)
+                    return
+                except (OSError, FileNotFoundError) as exc:
+                    last_error = exc
+                    logger.warning(
+                        f"Socket connection attempt {attempt + 1} failed: {exc}"
+                    )
+                    time.sleep(0.2)  # Wait between attempts
+                finally:
+                    sock.close()
+            except Exception as e:
+                logger.error(f"Send attempt {attempt + 1} failed: {e}")
+                time.sleep(0.2)
+
+        # If all attempts fail, log and raise the last error
+        error_msg = f"Failed to send command to MPV after {max_attempts} attempts"
+        logger.error(error_msg)
         if last_error:
-            raise last_error
+            logger.error(f"Last socket error: {last_error}")
+
+        # Attempt to restart process before final failure
+        try:
+            if self.process:
+                self.process.terminate()
+            self._ensure_process()
+        except Exception as restart_error:
+            logger.error(f"Failed to restart MPV process: {restart_error}")
+
+        raise RuntimeError(error_msg)
 
     def start_event_listener(self, callback):
         with self.listener_lock:
@@ -434,11 +527,19 @@ class ClarionetApp(Gtk.ApplicationWindow):
         self.base_title = f"{APP_NAME} {APP_VERSION}"
         self.set_wmclass("clarionet", "Clarionet")
         self.set_icon_name("clarionet")
-        self.fixed_width = 640
-        self.fixed_height = 395
+        # Golden Ratio Calculation
+        self.fixed_width = 732
+        self.fixed_height = int(732 / 1.618)  # Precisely 452 px
+
+        # Ensure minimum UI height per specification
+        min_footer_height = 56
+        min_header_height = 56
+        min_content_height = 280  # Adjusted to fill the window
+
         self.set_default_size(self.fixed_width, self.fixed_height)
         self.set_size_request(self.fixed_width, self.fixed_height)
         self.set_resizable(False)
+
         geometry = Gdk.Geometry()
         geometry.min_width = self.fixed_width
         geometry.min_height = self.fixed_height
@@ -448,6 +549,7 @@ class ClarionetApp(Gtk.ApplicationWindow):
         geometry.base_height = self.fixed_height
         geometry.width_inc = 1
         geometry.height_inc = 1
+
         self.set_geometry_hints(
             self,
             geometry,
@@ -456,9 +558,21 @@ class ClarionetApp(Gtk.ApplicationWindow):
             | Gdk.WindowHints.BASE_SIZE
             | Gdk.WindowHints.RESIZE_INC,
         )
+
         self.set_border_width(16)
         self.content_width = self.fixed_width - (self.get_border_width() * 2)
-        self.content_height = self.fixed_height - (self.get_border_width() * 2)
+
+        # Dynamically calculate content height
+        border_adjustment = self.get_border_width() * 2
+        self.content_height = self.fixed_height - border_adjustment
+
+        # Logging for verification
+        logger.info(f"Content Dimensions: {self.content_width}x{self.content_height}")
+
+        # Log the precise golden ratio dimensions for verification
+        logger.info(
+            f"Window Dimensions: {self.fixed_width}x{self.fixed_height} (Golden Ratio)"
+        )
 
         self._set_window_icons()
         icon_path = ASSETS_DIR / "icons" / "clarionet_icon_32x32.png"
@@ -470,24 +584,47 @@ class ClarionetApp(Gtk.ApplicationWindow):
         self.current_label = Gtk.Label(label="-", xalign=0.5)
         self.current_label.set_ellipsize(Pango.EllipsizeMode.END)
         self.display_char_limit = 24
-        self.current_label.set_width_chars(self.display_char_limit)
-        self.current_label.set_max_width_chars(self.display_char_limit)
+        # Dynamically calculate display character limit based on new width
+        self.display_char_limit = int(
+            self.fixed_width * 0.05
+        )  # roughly 5% of window width
+
         self.current_label.set_line_wrap(False)
-        self.track_label = Gtk.Label(label="-", xalign=0.5)
-        self.track_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.track_label.set_width_chars(self.display_char_limit)
-        self.track_label.set_max_width_chars(self.display_char_limit)
-        self.track_label.set_line_wrap(False)
-        self.track_label.set_no_show_all(True)
-        self.track_label.hide()
+        self.current_label.set_max_width_chars(self.display_char_limit)
+        self.current_label.set_width_chars(self.display_char_limit)
+        self.current_label.set_single_line_mode(True)
+
+        self.track_text = ""
+        self.track_display = Gtk.DrawingArea()
+        self.track_display.set_hexpand(False)
+        self.track_display.set_vexpand(False)
+        self.track_display.connect("draw", self.on_track_draw)
+        self.current_scroller = self._wrap_marquee_label(self.current_label)
+        fixed_row_height = 48
+        self.current_scroller.set_size_request(-1, fixed_row_height)
+        self.current_scroller.set_vexpand(False)
+        self.current_scroller.set_min_content_width(self.content_width)
+        self.current_scroller.set_min_content_height(fixed_row_height)
+        self.track_display.set_size_request(self.content_width, fixed_row_height)
+        self.marquee_views = {
+            self.current_label: self.current_scroller,
+        }
         self.marquee_tasks = {}
         self.size_lock_id = None
         self.size_lock_interval = 100
+        self.size_lock_active = False
+        self.track_scroll_id = None
+        self.track_scroll_offset = 0.0
+        self.track_scroll_active = False
+        self.track_marquee_completed = False
 
         register_font(DIGITAL_FONT_PATH)
         self.get_style_context().add_class("app-window")
 
         self.mpv = MpvController(MPV_SOCKET)
+
+        # Schedule periodic log clearing every hour
+        GLib.timeout_add_seconds(3600, lambda: clear_log_periodically(MPV_LOG_PATH))
         legacy_dir = Path.home() / ".config" / "radiocity"
         legacy_config = legacy_dir / "config.json"
         legacy_radios = legacy_dir / "radios.json"
@@ -588,15 +725,27 @@ class ClarionetApp(Gtk.ApplicationWindow):
         self.station_next_button.connect("clicked", self.on_station_next)
 
         self.station_display = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        self.station_display.set_hexpand(True)
-        self.station_display.set_halign(Gtk.Align.FILL)
-        self.station_display.set_homogeneous(True)
+        self.station_display.set_hexpand(False)
+        self.station_display.set_vexpand(False)
+        self.station_display.set_halign(Gtk.Align.CENTER)
+        self.station_display.set_homogeneous(False)
+        self.station_display.set_margin_top(10)
+        self.station_display.set_margin_bottom(10)
+        self.station_display.set_margin_start(10)
+        self.station_display.set_margin_end(10)
         self.current_label.set_valign(Gtk.Align.CENTER)
-        self.track_label.set_valign(Gtk.Align.START)
-        self.station_display.pack_start(self.current_label, True, True, 0)
-        self.station_display.pack_start(self.track_label, True, True, 0)
+        self.track_display.set_valign(Gtk.Align.CENTER)
+        self.track_display.set_margin_top(10)
+        self.now_playing_divider = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        self.now_playing_divider.set_size_request(-1, 4)
+        self.now_playing_divider.get_style_context().add_class("now-playing-divider")
+        self.station_display.pack_start(self.current_scroller, False, False, 0)
+        self.station_display.pack_start(self.now_playing_divider, False, False, 6)
+        self.station_display.pack_start(self.track_display, False, False, 0)
         self.station_display.get_style_context().add_class("now-playing-box")
-        self.station_display.set_size_request(self.content_width, -1)
+        now_playing_height = max((fixed_row_height * 2) + 16, 140)
+        self.station_display.set_size_request(self.content_width, now_playing_height)
+        self.station_display.set_property("width-request", self.content_width)
         self.update_display_alignment(False)
 
         self.play_button = Gtk.Button()
@@ -817,7 +966,6 @@ class ClarionetApp(Gtk.ApplicationWindow):
 
         footer_box.get_style_context().add_class("footer")
         self.current_label.get_style_context().add_class("now-playing")
-        self.track_label.get_style_context().add_class("now-playing")
         self.connect("delete-event", self.on_delete_event)
 
         self.tray = self._build_tray()
@@ -883,6 +1031,22 @@ class ClarionetApp(Gtk.ApplicationWindow):
         button.connect("clicked", self.on_edit_station_list)
         return button
 
+    def _wrap_marquee_label(self, label):
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.NEVER)
+        scroller.set_shadow_type(Gtk.ShadowType.NONE)
+        scroller.set_hexpand(True)
+        scroller.set_vexpand(False)
+        scroller.set_property("propagate-natural-width", False)
+        scroller.set_property("propagate-natural-height", False)
+
+        # Ensure scrollbar is completely hidden
+        scroller.get_hscrollbar().hide()
+        scroller.get_vscrollbar().hide()
+
+        scroller.add(label)
+        return scroller
+
     def restore_selection(self):
         last_radio_id = self.config.get("last_radio_id")
         rows = self.get_sorted_rows()
@@ -910,10 +1074,8 @@ class ClarionetApp(Gtk.ApplicationWindow):
         if state in (STATE_IDLE, STATE_ERROR):
             self.playing_id = None
             self.playing_name = None
-            self.track_label.set_text("-")
-            self.track_label.hide()
+            self.set_track_text("")
             self.update_display_alignment(False)
-            self.update_marquee(self.track_label)
             if state == STATE_IDLE and self.selected_row:
                 self.current_label.set_text(self.selected_row.name)
                 self.update_marquee(self.current_label)
@@ -1027,15 +1189,29 @@ class ClarionetApp(Gtk.ApplicationWindow):
                 GLib.idle_add(self.set_state, STATE_IDLE)
                 return
             if payload.get("name") == "media-title":
-                title = (payload.get("data") or "").strip()
-                if title and not self.is_stream_filename(title):
-                    GLib.idle_add(self.track_label.set_text, title)
-                    GLib.idle_add(self.track_label.show)
+                # Remove extra quotes and strip
+                title = (payload.get("data") or "").strip("'").strip()
+                logger.info(f"RAW Received media title: '{repr(title)}'")
+                logger.info(f"RAW Payload full data: {repr(payload)}")
+
+                # Determine if title is meaningful
+                is_meaningful = (
+                    title
+                    and len(title) > 3  # More than 3 characters
+                    and not self.is_stream_filename(title)
+                    and title.lower() not in ["mp3", "aac", "radio"]
+                )
+
+                if is_meaningful:
+                    # Prefer artist - track format, truncate if too long
+                    full_metadata = title[:100]  # Limit to 100 characters
+
+                    logger.info(f"Processed metadata: '{full_metadata}'")
+
+                    GLib.idle_add(self.set_track_text, full_metadata)
                     GLib.idle_add(self.update_display_alignment, True)
-                    GLib.idle_add(self.schedule_marquee_now, self.track_label, title)
                 else:
-                    GLib.idle_add(self.track_label.hide)
-                    GLib.idle_add(self.track_label.set_text, "-")
+                    GLib.idle_add(self.set_track_text, "")
                     GLib.idle_add(self.update_display_alignment, False)
 
     def is_stream_filename(self, title):
@@ -1121,24 +1297,155 @@ class ClarionetApp(Gtk.ApplicationWindow):
 
     def on_display_resize(self, *_):
         self.update_marquee(self.current_label)
-        self.update_marquee(self.track_label)
+        self.start_track_marquee_if_needed()
 
     def update_display_alignment(self, has_metadata):
-        self.current_label.set_valign(
-            Gtk.Align.START if has_metadata else Gtk.Align.CENTER
-        )
-        self.track_label.set_valign(Gtk.Align.START)
-        self.station_display.queue_resize()
+        self.current_label.set_valign(Gtk.Align.CENTER)
+        # Removed queue_resize to prevent spontaneous resizing
+        self.station_display.queue_draw()
+
+    def set_track_text(self, text):
+        self.track_text = (text or "").strip()
+        if self.track_scroll_id is not None:
+            GLib.source_remove(self.track_scroll_id)
+            self.track_scroll_id = None
+        self.track_scroll_offset = 0.0
+        self.track_scroll_active = False
+        self.track_marquee_completed = False
+        self.track_display.queue_draw()
+        self.start_track_marquee_if_needed(0)
+
+    def start_track_marquee_if_needed(self, attempt=0):
+        if (
+            not self.track_text
+            or self.track_scroll_active
+            or self.track_marquee_completed
+        ):
+            return False
+        if self.track_scroll_id is not None:
+            return False
+
+        alloc = self.track_display.get_allocation()
+        available_width = alloc.width
+        if available_width <= 0:
+            if attempt < 5:
+                GLib.timeout_add(150, self.start_track_marquee_if_needed, attempt + 1)
+            return False
+
+        layout = self.track_display.create_pango_layout(self.track_text)
+        font = Pango.FontDescription(f"{DIGITAL_FONT_FAMILY} 48")
+        layout.set_font_description(font)
+        layout.set_ellipsize(Pango.EllipsizeMode.NONE)
+        layout.set_width(-1)
+        text_width, _ = layout.get_pixel_size()
+
+        if text_width <= available_width:
+            self.track_scroll_offset = 0.0
+            self.track_scroll_active = False
+            self.track_display.queue_draw()
+            return False
+
+        max_offset = text_width
+        scroll_speed_px_per_sec = 80
+        scroll_interval_ms = 16
+        step_size = scroll_speed_px_per_sec * (scroll_interval_ms / 1000.0)
+        self.track_scroll_active = True
+
+        def scroll_tick():
+            self.track_scroll_offset = min(
+                self.track_scroll_offset + step_size, max_offset
+            )
+            self.track_display.queue_draw()
+
+            if self.track_scroll_offset >= max_offset:
+                self.track_scroll_offset = 0.0
+                self.track_scroll_active = False
+                self.track_scroll_id = None
+                self.track_marquee_completed = True
+                self.track_display.queue_draw()
+                return False
+
+            return True
+
+        def start_scroll():
+            self.track_scroll_id = GLib.timeout_add(scroll_interval_ms, scroll_tick)
+            return False
+
+        GLib.timeout_add(5000, start_scroll)
+        return False
+
+    def on_track_draw(self, widget, cr):
+        alloc = widget.get_allocation()
+        cr.set_source_rgb(0, 0, 0)
+        cr.rectangle(0, 0, alloc.width, alloc.height)
+        cr.fill()
+
+        if not self.track_text:
+            return False
+
+        layout = widget.create_pango_layout(self.track_text)
+        font = Pango.FontDescription(f"{DIGITAL_FONT_FAMILY} 48")
+        layout.set_font_description(font)
+        layout.set_alignment(Pango.Alignment.CENTER)
+
+        cr.set_source_rgb(0.83, 0.55, 0.22)
+
+        if self.track_scroll_active or self.track_scroll_offset > 0:
+            layout.set_ellipsize(Pango.EllipsizeMode.NONE)
+            layout.set_width(-1)
+            text_width, text_height = layout.get_pixel_size()
+            y = max(0, int((alloc.height - text_height) / 2))
+            cr.save()
+            cr.rectangle(0, 0, alloc.width, alloc.height)
+            cr.clip()
+            cr.move_to(-self.track_scroll_offset, y)
+            PangoCairo.show_layout(cr, layout)
+            cr.restore()
+            return False
+
+        layout.set_ellipsize(Pango.EllipsizeMode.END)
+        layout.set_width(max(1, alloc.width) * Pango.SCALE)
+        text_width, text_height = layout.get_pixel_size()
+        y = max(0, int((alloc.height - text_height) / 2))
+        cr.move_to(0, y)
+        PangoCairo.show_layout(cr, layout)
+        return False
+
+    def clamp_window_size(self):
+        self.set_size_request(self.fixed_width, self.fixed_height)
+        self.resize(self.fixed_width, self.fixed_height)
+        child = self.get_child()
+        if child:
+            child.set_size_request(self.content_width, self.content_height)
+        window = self.get_window()
+        if window:
+            window.resize(self.fixed_width, self.fixed_height)
+        return False
 
     def enforce_fixed_size(self, widget, allocation):
         if (
             allocation.width != self.fixed_width
             or allocation.height != self.fixed_height
         ):
-            self.resize(self.fixed_width, self.fixed_height)
-        child = self.get_child()
-        if child:
-            child.set_size_request(self.content_width, self.content_height)
+            if self.size_lock_active:
+                return False
+            self.size_lock_active = True
+            try:
+                logger.warning(
+                    f"Unexpected size change: {allocation.width}x{allocation.height} "
+                    f"vs fixed {self.fixed_width}x{self.fixed_height}"
+                )
+                # Forcibly set size and prevent resizing
+                self.set_size_request(self.fixed_width, self.fixed_height)
+                self.resize(self.fixed_width, self.fixed_height)
+
+                # Adjust child widget size
+                child = self.get_child()
+                if child:
+                    child.set_size_request(self.content_width, self.content_height)
+            finally:
+                self.size_lock_active = False
+
         return False
 
     def on_map_event(self, *_):
@@ -1215,73 +1522,158 @@ class ClarionetApp(Gtk.ApplicationWindow):
         return False
 
     def update_marquee(self, label):
+        # Safely remove existing marquee tasks
         state = self.marquee_tasks.pop(label, None)
         if state:
             for key in ("start_id", "scroll_id"):
                 task_id = state.get(key)
-                if task_id:
-                    GLib.source_remove(task_id)
+                if task_id and GLib.main_context_default().find_source_by_id(task_id):
+                    try:
+                        GLib.source_remove(task_id)
+                    except Exception as e:
+                        logger.warning(f"Failed to remove marquee task: {e}")
+
         text = label.get_text() or ""
         if not text or text == "-":
+            label.set_ellipsize(Pango.EllipsizeMode.END)
+            self.reset_marquee_position(label)
             return
         if not self.label_overflows(label):
+            label.set_ellipsize(Pango.EllipsizeMode.END)
+            self.reset_marquee_position(label)
             return
-        start_id = GLib.timeout_add(30000, self.start_marquee, label, text)
-        self.marquee_tasks[label] = {"start_id": start_id, "text": text}
+
+        label.set_text(text)
+        label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.reset_marquee_position(label)
 
     def schedule_marquee_now(self, label, text):
+        """
+        Immediately check if text needs scrolling and start scrolling if needed
+        """
+        self.clamp_window_size()
         state = self.marquee_tasks.pop(label, None)
         if state:
             for key in ("start_id", "scroll_id"):
                 task_id = state.get(key)
                 if task_id:
                     GLib.source_remove(task_id)
+
+        # Retry detection a few times to allow layout to stabilize
         GLib.timeout_add(150, self.start_marquee_now, label, text, 0)
         return False
 
     def start_marquee_now(self, label, text, attempt):
-        if self.label_overflows(label) or len(text) > self.display_char_limit:
+        """
+        Detect overflow and start scrolling immediately if needed
+        """
+        if self.label_overflows(label):
             self.start_marquee(label, text)
             return False
+
+        # Retry a few more times if layout not ready
         if attempt < 5:
             GLib.timeout_add(150, self.start_marquee_now, label, text, attempt + 1)
         return False
 
+    def reset_marquee_position(self, label):
+        scroller = self.marquee_views.get(label)
+        if not scroller:
+            return
+        adjustment = scroller.get_hadjustment()
+        if adjustment:
+            adjustment.set_value(0)
+
     def label_overflows(self, label):
         text = label.get_text() or ""
-        if text == "-":
-            return False
-        layout = label.get_layout()
-        if not layout:
-            return len(text) > self.display_char_limit
-        width, _ = layout.get_pixel_size()
+        layout = label.create_pango_layout(text)
+        layout.set_ellipsize(Pango.EllipsizeMode.NONE)
+        layout.set_width(-1)
+        text_width, _ = layout.get_pixel_size()
+
+        scroller = self.marquee_views.get(label)
         available = label.get_allocated_width()
+        if scroller:
+            available = scroller.get_allocated_width()
+
+        logger.debug(
+            f"Overflow check: text='{text}', text_width={text_width}, available={available}"
+        )
+
         if available <= 0:
-            return len(text) > self.display_char_limit
-        return width > available or len(text) > self.display_char_limit
+            return False
+        return text_width > available
 
     def start_marquee(self, label, text):
+        """
+        Initiate smooth, complete pixel-based scrolling for overflowing labels
+        """
         if not self.label_overflows(label):
+            label.set_ellipsize(Pango.EllipsizeMode.END)
+            self.reset_marquee_position(label)
             return False
-        gap = "   "
-        padded = text + gap
-        total = len(padded)
-        state = {"offset": 0, "text": text, "padded": padded, "total": total}
 
-        def tick():
-            state["offset"] += 1
-            if state["offset"] >= state["total"]:
-                label.set_text(text)
-                self.update_marquee(label)
-                return False
-            rotated = (
-                state["padded"][state["offset"] :] + state["padded"][: state["offset"]]
+        scroller = self.marquee_views.get(label)
+        if not scroller:
+            return False
+
+        layout = label.create_pango_layout(text)
+        text_width, _ = layout.get_pixel_size()
+        available_width = scroller.get_allocated_width()
+
+        if text_width <= available_width or available_width <= 0:
+            logger.debug(
+                f"Text width {text_width} <= available {available_width}, skipping scroll"
             )
-            label.set_text(rotated)
+            return False
+
+        max_scroll_distance = text_width - available_width
+
+        scroll_speed_px_per_sec = 80
+        scroll_interval_ms = 16  # Update every 16ms for smooth animation
+        scroll_duration_ms = (
+            max_scroll_distance / scroll_speed_px_per_sec
+        ) * 1000  # Dynamic duration
+        scroll_steps = max(scroll_duration_ms / scroll_interval_ms, 1)
+        step_size = max_scroll_distance / scroll_steps
+
+        adjustment = scroller.get_hadjustment()
+        adjustment.set_lower(0)
+        adjustment.set_upper(max(text_width, available_width))
+        adjustment.set_page_size(available_width)
+        adjustment.set_value(0)
+        label.set_ellipsize(Pango.EllipsizeMode.NONE)
+
+        logger.debug(
+            f"Marquee: text_width={text_width}, available={available_width}, max_distance={max_scroll_distance}, step_size={step_size}"
+        )
+
+        state = {
+            "current_offset": 0.0,
+            "max_offset": max_scroll_distance,
+            "step_size": step_size,
+            "adjustment": adjustment,
+        }
+
+        def scroll_tick():
+            state["current_offset"] += state["step_size"]
+            state["adjustment"].set_value(state["current_offset"])
+
+            if state["current_offset"] >= state["max_offset"]:
+                state["adjustment"].set_value(0)
+                label.set_ellipsize(Pango.EllipsizeMode.END)
+
+                self.marquee_tasks.pop(label, None)
+                return False
+
             return True
 
-        scroll_id = GLib.timeout_add(120, tick)
+        # Start smooth scrolling
+        scroll_id = GLib.timeout_add(scroll_interval_ms, scroll_tick)
+
+        # Store scroll task for potential cancellation
         self.marquee_tasks[label] = {"scroll_id": scroll_id, "text": text}
+
         return False
 
     def refresh_preset_labels(self):
@@ -1423,6 +1815,7 @@ class ClarionetApp(Gtk.ApplicationWindow):
 
     def on_edit_station_list(self, *_):
         dialog = Gtk.Dialog(title="Editer la liste", parent=self, flags=0)
+        dialog.get_style_context().add_class("app-window")
         dialog.add_button("Fermer", Gtk.ResponseType.CANCEL)
         dialog.add_button("Enregistrer", Gtk.ResponseType.OK)
         dialog.set_default_size(560, 520)
@@ -1597,6 +1990,7 @@ class ClarionetApp(Gtk.ApplicationWindow):
     def on_add(self, *_, parent=None):
         dialog_parent = parent or self
         dialog = Gtk.Dialog(title="Ajouter une radio", parent=dialog_parent, flags=0)
+        dialog.get_style_context().add_class("app-window")
         dialog.add_button("Annuler", Gtk.ResponseType.CANCEL)
         dialog.add_button("Ajouter", Gtk.ResponseType.OK)
 
@@ -1622,6 +2016,7 @@ class ClarionetApp(Gtk.ApplicationWindow):
     def on_add_browser(self, *_, parent=None):
         dialog_parent = parent or self
         dialog = Gtk.Dialog(title="Importer une radio", parent=dialog_parent, flags=0)
+        dialog.get_style_context().add_class("app-window")
         dialog.add_button("Annuler", Gtk.ResponseType.CANCEL)
         dialog.add_button("Ajouter", Gtk.ResponseType.OK)
         dialog.set_default_size(520, 480)
@@ -1715,6 +2110,7 @@ class ClarionetApp(Gtk.ApplicationWindow):
             self.fetch_radio_browser(query, on_result, on_error)
 
         search_button.connect("clicked", on_search_clicked)
+        search_entry.connect("activate", on_search_clicked)
 
         content.show_all()
         response = dialog.run()
@@ -1774,7 +2170,7 @@ class ClarionetApp(Gtk.ApplicationWindow):
             return
         self.playing_id = row.radio_id
         self.playing_name = row.name
-        self.track_label.set_text("-")
+        self.set_track_text("")
         self.update_preset_styles()
         logger.info("Play %s", row.name)
         logger.info("Stream URL %s", row.stream_url)
@@ -2014,7 +2410,16 @@ class ClarionetApp(Gtk.ApplicationWindow):
             border-radius: 12px;
             padding: 12px 18px;
             min-width: 260px;
-            min-height: 160px;
+            min-height: 140px;
+        }}
+        .now-playing-divider {{
+            margin: 8px 0 6px 0;
+            min-height: 2px;
+            border-top: 2px dotted #000000;
+            border-bottom: none;
+            border-left: none;
+            border-right: none;
+            background: transparent;
         }}
         .volume-icon {{
             color: #d48b39;
@@ -2047,7 +2452,8 @@ class ClarionetApp(Gtk.ApplicationWindow):
             background: transparent;
         }}
 
-        window.app-window {{
+        window.app-window,
+        dialog.app-window {{
             background-image: url("file://{background_image}");
             background-repeat: no-repeat;
             background-position: center;

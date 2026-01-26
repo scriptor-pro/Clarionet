@@ -2,7 +2,7 @@
 set -euo pipefail
 
 NAME="clarionet"
-VERSION="0.2.1"
+VERSION="0.2.2"
 DESC="Minimalist autoradio-style internet radio player"
 LICENSE="MIT"
 
@@ -19,11 +19,9 @@ COMMON_ARGS=(
   -v "${VERSION}"
   --description "${DESC}"
   --license "${LICENSE}"
-  --depends "python"
-  --depends "mpv"
-  --depends "gtk3"
-  --depends "python-gobject"
-  --prefix /usr
+)
+
+FILE_ARGS=(
   "clarionet=/usr/bin/clarionet"
   "clarionet.desktop=/usr/share/applications/clarionet.desktop"
   "radiocity.py=/usr/share/clarionet/clarionet.py"
@@ -43,7 +41,35 @@ done
 build() {
   local target="$1"
   shift
-  fpm -t "${target}" "${COMMON_ARGS[@]}" "${ICON_FILES[@]}"
+  local depends=()
+  case "${target}" in
+    deb)
+      depends+=(
+        --depends "python3"
+        --depends "python3-gi"
+        --depends "gir1.2-gtk-3.0"
+        --depends "libgtk-3-0"
+        --depends "mpv"
+      )
+      ;;
+    rpm)
+      depends+=(
+        --depends "python3"
+        --depends "python3-gobject"
+        --depends "gtk3"
+        --depends "mpv"
+      )
+      ;;
+    pacman)
+      depends+=(
+        --depends "python"
+        --depends "python-gobject"
+        --depends "gtk3"
+        --depends "mpv"
+      )
+      ;;
+  esac
+  fpm -t "${target}" "${COMMON_ARGS[@]}" "${depends[@]}" "${ICON_FILES[@]}" "${FILE_ARGS[@]}"
 }
 
 case "${1:-}" in
