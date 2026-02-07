@@ -11,7 +11,7 @@ if (-not $version) {
   }
 }
 
-$distDir = Join-Path $root "dist"
+$distDir = Join-Path $root "dist\packages\windows"
 $buildDir = Join-Path $distDir "clarionet"
 $venvDir = Join-Path $root ".venv-win"
 $iconPath = Join-Path $root "assets\icons\clarionet.ico"
@@ -39,18 +39,19 @@ if (Test-Path $iconPath) {
   --noconfirm `
   --name "clarionet" `
   --windowed `
+  --distpath "$distDir" `
   --add-data "$root\assets;assets" `
   @iconArgs `
   "$root\radiocity.py"
 
-$exeSource = Join-Path $root "dist\clarionet\clarionet.exe"
+$exeSource = Join-Path $distDir "clarionet\clarionet.exe"
 if (-not (Test-Path $exeSource)) {
   throw "Executable not found at $exeSource"
 }
 
 $issTemplate = Get-Content "$root\packaging\windows\installer.iss" -Raw
 $issContent = $issTemplate.Replace("__VERSION__", $version).Replace("__SOURCE_DIR__", $root)
-$issPath = Join-Path $root "dist\clarionet-installer.iss"
+$issPath = Join-Path $distDir "clarionet-installer.iss"
 Set-Content -Path $issPath -Value $issContent -Encoding ASCII
 
 $inno = Get-Command "iscc" -ErrorAction SilentlyContinue

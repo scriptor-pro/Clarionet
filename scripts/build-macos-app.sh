@@ -6,7 +6,7 @@ VERSION=$(grep -E '^APP_VERSION' "$ROOT_DIR/radiocity.py" | head -n1 | cut -d '"
 VERSION=${VERSION:-0.0.0}
 
 VENV_DIR="$ROOT_DIR/.venv-macos"
-DIST_DIR="$ROOT_DIR/dist"
+DIST_DIR="$ROOT_DIR/dist/packages/macos"
 APP_NAME="Clarionet"
 ICON_PNG="$ROOT_DIR/assets/icons/clarionet_icon_512x512.png"
 ICON_ICNS="$ROOT_DIR/assets/icons/clarionet.icns"
@@ -59,6 +59,7 @@ fi
   --name "$APP_NAME" \
   --windowed \
   --osx-bundle-identifier "com.clarionet.app" \
+  --distpath "$DIST_DIR" \
   --add-data "$ROOT_DIR/assets:assets" \
   "${ICON_ARGS[@]}" \
   "$ROOT_DIR/radiocity.py"

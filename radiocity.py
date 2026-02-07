@@ -37,7 +37,7 @@ gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, Pango, PangoCairo
 
 APP_NAME = "Clarionet"
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.2.3"
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 CONFIG_DIR = Path.home() / ".config" / "clarionet"
 RADIOS_PATH = CONFIG_DIR / "radios.json"
@@ -1428,20 +1428,216 @@ class ClarionetApp(Gtk.ApplicationWindow):
             return
         self.on_play(None)
 
-    def on_add(self, _):
-        dialog = Gtk.Dialog(title="Ajouter une radio", parent=self, flags=0)
-        dialog.add_button("Annuler", Gtk.ResponseType.CANCEL)
-        dialog.add_button("Ajouter", Gtk.ResponseType.OK)
+    def on_edit_station_list(self, *_):
+        dialog = Gtk.Dialog(title="Editer la liste", parent=self, flags=0)
+        dialog.get_style_context().add_class("app-window")
+        close_button = dialog.add_button("Fermer", Gtk.ResponseType.CANCEL)
+        save_button = dialog.add_button("Enregistrer", Gtk.ResponseType.OK)
+        dialog.set_default_size(560, 520)
 
         content = dialog.get_content_area()
+        content.set_spacing(12)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.get_style_context().add_class("edit-dialog")
+
+        close_button.get_style_context().add_class("edit-action-button")
+        save_button.get_style_context().add_class("edit-action-button")
+
+        title_label = Gtk.Label(label="Editer la liste des radios", xalign=0)
+        title_label.get_style_context().add_class("dialog-title")
+        content.add(title_label)
+
+        actions_box = Gtk.Box(spacing=8)
+        actions_box.get_style_context().add_class("edit-actions")
+        add_manual_button = Gtk.Button(label="Ajouter une radio")
+        add_browser_button = Gtk.Button(label="Importer Radio-Browser")
+        add_manual_button.get_style_context().add_class("edit-action-button")
+        add_browser_button.get_style_context().add_class("edit-action-button")
+        actions_box.pack_start(add_manual_button, False, False, 0)
+        actions_box.pack_start(add_browser_button, False, False, 0)
+        content.add(actions_box)
+
+        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        content.add(separator)
+
+        list_box = Gtk.ListBox()
+        list_box.set_selection_mode(Gtk.SelectionMode.NONE)
+        list_box.get_style_context().add_class("edit-list")
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_vexpand(True)
+        scrolled.set_min_content_height(260)
+        scrolled.get_style_context().add_class("edit-scrolled")
+        scrolled.add(list_box)
+        content.add(scrolled)
+
+        removed_ids = set()
+
+        def on_delete_clicked(_button, row):
+            confirm = Gtk.MessageDialog(
+                parent=dialog,
+                flags=0,
+                message_type=Gtk.MessageType.QUESTION,
+                buttons=Gtk.ButtonsType.NONE,
+                text="Supprimer cette radio ?",
+            )
+            confirm.add_button("Annuler", Gtk.ResponseType.CANCEL)
+            confirm.add_button("Supprimer", Gtk.ResponseType.OK)
+            response = confirm.run()
+            confirm.destroy()
+            if response != Gtk.ResponseType.OK:
+                return
+            removed_ids.add(row.radio_id)
+            list_box.remove(row)
+
+        def refresh_list():
+            for child in list_box.get_children():
+                list_box.remove(child)
+            radios = sorted(self.radios, key=lambda item: item["name"].lower())
+            for radio in radios:
+                if radio["id"] in removed_ids:
+                    continue
+                row = Gtk.ListBoxRow()
+                row.radio_id = radio["id"]
+
+                name_entry = Gtk.Entry()
+                name_entry.set_text(radio["name"])
+                name_entry.get_style_context().add_class("edit-entry")
+                row.name_entry = name_entry
+
+                url_label = Gtk.Label(label=radio.get("stream_url", ""), xalign=0)
+                url_label.set_ellipsize(Pango.EllipsizeMode.END)
+                url_label.set_hexpand(True)
+                url_label.get_style_context().add_class("edit-url")
+
+                info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                info_box.pack_start(name_entry, False, False, 0)
+                info_box.pack_start(url_label, False, False, 0)
+
+                delete_button = Gtk.Button()
+                delete_button.set_image(
+                    Gtk.Image.new_from_icon_name(
+                        "user-trash-symbolic", Gtk.IconSize.BUTTON
+                    )
+                )
+                delete_button.set_relief(Gtk.ReliefStyle.NONE)
+                delete_button.set_tooltip_text("Supprimer")
+                delete_button.get_style_context().add_class("edit-delete-button")
+                delete_button.connect("clicked", on_delete_clicked, row)
+
+                row_box = Gtk.Box(spacing=8)
+                row_box.set_margin_start(8)
+                row_box.set_margin_end(8)
+                row_box.set_margin_top(6)
+                row_box.set_margin_bottom(6)
+                row_box.get_style_context().add_class("edit-row")
+                row_box.pack_start(info_box, True, True, 0)
+                row_box.pack_start(delete_button, False, False, 0)
+                row.add(row_box)
+                list_box.add(row)
+            list_box.show_all()
+
+        def add_manual(_button):
+            self.on_add(parent=dialog)
+            refresh_list()
+
+        def add_browser(_button):
+            self.on_add_browser(parent=dialog)
+            refresh_list()
+
+        add_manual_button.connect("clicked", add_manual)
+        add_browser_button.connect("clicked", add_browser)
+
+        refresh_list()
+        content.show_all()
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            updated = False
+            removed = False
+            radios_by_id = {radio["id"]: radio for radio in self.radios}
+
+            for radio_id in list(removed_ids):
+                self.remove_radio_by_id(radio_id)
+                removed = True
+
+            for row in list_box.get_children():
+                radio = radios_by_id.get(row.radio_id)
+                if not radio:
+                    continue
+                new_name = row.name_entry.get_text().strip()
+                if new_name and new_name != radio["name"]:
+                    radio["name"] = new_name
+                    updated = True
+                    main_row = next(
+                        (
+                            child
+                            for child in self.listbox.get_children()
+                            if child.radio_id == row.radio_id
+                        ),
+                        None,
+                    )
+                    if main_row:
+                        main_row.name = new_name
+                        main_row.label.set_text(new_name)
+
+            if updated:
+                save_json(RADIOS_PATH, self.radios)
+                self.listbox.invalidate_sort()
+                self.listbox.show_all()
+                self.refresh_row_styles()
+                if self.selected_row:
+                    self.current_label.set_text(self.selected_row.name)
+                    self.update_marquee(self.current_label)
+                if self.playing_id:
+                    playing_row = next(
+                        (
+                            child
+                            for child in self.listbox.get_children()
+                            if child.radio_id == self.playing_id
+                        ),
+                        None,
+                    )
+                    if playing_row:
+                        self.playing_name = playing_row.name
+
+            if updated or removed:
+                self.refresh_preset_labels()
+
+        dialog.destroy()
+
+    def on_add(self, *_, parent=None):
+        dialog_parent = parent or self
+        dialog = Gtk.Dialog(title="Ajouter une radio", parent=dialog_parent, flags=0)
+        dialog.get_style_context().add_class("app-window")
+        cancel_button = dialog.add_button("Annuler", Gtk.ResponseType.CANCEL)
+        ok_button = dialog.add_button("Ajouter", Gtk.ResponseType.OK)
+
+        content = dialog.get_content_area()
+        content.set_spacing(12)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.get_style_context().add_class("add-dialog")
+
+        title_label = Gtk.Label(label="Ajouter une radio", xalign=0)
+        title_label.get_style_context().add_class("dialog-title")
+        content.add(title_label)
         name_entry = Gtk.Entry()
         url_entry = Gtk.Entry()
+        name_entry.get_style_context().add_class("add-entry")
+        url_entry.get_style_context().add_class("add-entry")
         name_entry.set_placeholder_text("Nom")
         url_entry.set_placeholder_text("URL du stream")
         content.add(Gtk.Label(label="Nom", xalign=0))
         content.add(name_entry)
         content.add(Gtk.Label(label="URL", xalign=0))
         content.add(url_entry)
+
+        cancel_button.get_style_context().add_class("add-action-button")
+        ok_button.get_style_context().add_class("add-action-button")
 
         content.show_all()
         response = dialog.run()
@@ -1452,31 +1648,48 @@ class ClarionetApp(Gtk.ApplicationWindow):
                 self.add_radios([{"name": name, "stream_url": url}])
         dialog.destroy()
 
-    def on_add_browser(self):
-        dialog = Gtk.Dialog(title="Importer une radio", parent=self, flags=0)
-        dialog.add_button("Annuler", Gtk.ResponseType.CANCEL)
-        dialog.add_button("Ajouter", Gtk.ResponseType.OK)
+    def on_add_browser(self, *_, parent=None):
+        dialog_parent = parent or self
+        dialog = Gtk.Dialog(title="Importer une radio", parent=dialog_parent, flags=0)
+        dialog.get_style_context().add_class("app-window")
+        cancel_button = dialog.add_button("Annuler", Gtk.ResponseType.CANCEL)
+        ok_button = dialog.add_button("Ajouter", Gtk.ResponseType.OK)
         dialog.set_default_size(520, 480)
 
         content = dialog.get_content_area()
-        content.add(Gtk.Label(label="Importer depuis Radio-Browser", xalign=0))
+        content.set_spacing(12)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.get_style_context().add_class("browser-dialog")
+
+        title_label = Gtk.Label(label="Importer depuis Radio-Browser", xalign=0)
+        title_label.get_style_context().add_class("dialog-title")
+        content.add(title_label)
 
         search_box = Gtk.Box(spacing=8)
+        search_box.get_style_context().add_class("browser-search")
         search_entry = Gtk.Entry()
+        search_entry.get_style_context().add_class("browser-entry")
         search_entry.set_placeholder_text("Recherche par nom")
         search_button = Gtk.Button(label="Rechercher")
+        search_button.get_style_context().add_class("browser-button")
         search_box.pack_start(search_entry, True, True, 0)
         search_box.pack_start(search_button, False, False, 0)
         content.add(search_box)
 
         status_label = Gtk.Label(label="", xalign=0)
+        status_label.get_style_context().add_class("browser-status")
         content.add(status_label)
 
         results_box = Gtk.ListBox()
         results_box.set_selection_mode(Gtk.SelectionMode.NONE)
+        results_box.get_style_context().add_class("browser-list")
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_vexpand(True)
         scrolled.set_min_content_height(220)
+        scrolled.get_style_context().add_class("browser-scrolled")
         scrolled.add(results_box)
         content.add(scrolled)
 
@@ -1508,7 +1721,13 @@ class ClarionetApp(Gtk.ApplicationWindow):
                 else:
                     label = base_label
                 check = Gtk.CheckButton(label=label)
+                check.get_style_context().add_class("browser-check")
+                check.set_margin_start(8)
+                check.set_margin_end(8)
+                check.set_margin_top(6)
+                check.set_margin_bottom(6)
                 row = Gtk.ListBoxRow()
+                row.get_style_context().add_class("browser-result")
                 row.station = {
                     "name": name,
                     "stream_url": url,
@@ -1547,6 +1766,9 @@ class ClarionetApp(Gtk.ApplicationWindow):
             self.fetch_radio_browser(query, on_result, on_error)
 
         search_button.connect("clicked", on_search_clicked)
+
+        cancel_button.get_style_context().add_class("browser-action-button")
+        ok_button.get_style_context().add_class("browser-action-button")
 
         content.show_all()
         response = dialog.run()
@@ -1844,6 +2066,165 @@ class ClarionetApp(Gtk.ApplicationWindow):
             font-family: "{DIGITAL_FONT_FAMILY}";
         }}
         .volume-accent {{ color: #d48b39; }}
+
+
+        .browser-dialog,
+        .add-dialog,
+        .edit-dialog {{
+            background-color: rgba(0, 0, 0, 0.6);
+            border-radius: 12px;
+            padding: 6px;
+        }}
+        .browser-dialog label,
+        .add-dialog label,
+        .edit-dialog label {{
+            color: #f2f2f2;
+        }}
+        .browser-dialog .dialog-title,
+        .add-dialog .dialog-title,
+        .edit-dialog .dialog-title {{
+            font-weight: 600;
+            font-size: 16px;
+        }}
+        .edit-dialog .edit-entry {{
+            min-height: 30px;
+        }}
+        .edit-dialog .edit-url {{
+            color: #8a8a8a;
+            font-size: 12px;
+        }}
+        .edit-list {{
+            background-color: rgba(0, 0, 0, 0.45);
+        }}
+        .edit-scrolled {{
+            border: 1px solid #2b2b2b;
+            border-radius: 10px;
+        }}
+        .edit-row {{
+            background-color: rgba(0, 0, 0, 0.35);
+            border-radius: 8px;
+            border: 1px solid #1f1f1f;
+        }}
+        .edit-row:hover {{
+            background-color: rgba(26, 26, 26, 0.9);
+            border-color: #2b2b2b;
+        }}
+        .edit-row button {{
+            background: transparent;
+            border-radius: 8px;
+            border: 1px solid transparent;
+        }}
+        .edit-row button image {{
+            color: #d48b39;
+        }}
+        .edit-row button:hover {{
+            border-color: #d48b39;
+            background-color: rgba(0, 0, 0, 0.4);
+        }}
+        .browser-search {{
+            padding: 4px 0;
+        }}
+        entry.browser-entry,
+        entry.add-entry,
+        entry.edit-entry,
+        .browser-entry,
+        .add-entry,
+        .edit-entry {{
+            background-color: #0c0c0c;
+            color: #f2f2f2;
+            border: 1px solid #2b2b2b;
+            border-radius: 10px;
+            padding: 6px 10px;
+        }}
+        entry.browser-entry:focus,
+        entry.add-entry:focus,
+        entry.edit-entry:focus,
+        .browser-entry:focus,
+        .add-entry:focus,
+        .edit-entry:focus {{
+            border-color: #d48b39;
+        }}
+        .browser-status {{
+            color: #b3b3b3;
+            font-size: 12px;
+        }}
+        .browser-scrolled {{
+            border: 1px solid #2b2b2b;
+            border-radius: 10px;
+        }}
+        .browser-list {{
+            background-color: rgba(0, 0, 0, 0.45);
+        }}
+        row.browser-result {{
+            background-color: rgba(0, 0, 0, 0.35);
+        }}
+        row.browser-result:hover {{
+            background-color: rgba(26, 26, 26, 0.9);
+        }}
+        .browser-check {{
+            color: #f2f2f2;
+        }}
+        .browser-check:checked {{
+            color: #f2f2f2;
+        }}
+        .browser-check check {{
+            border: 1px solid #2b2b2b;
+            background-color: #0c0c0c;
+        }}
+        .browser-check check:checked {{
+            background-color: #d48b39;
+            border-color: #d48b39;
+        }}
+        .browser-button,
+        .browser-action-button,
+        .add-action-button,
+        .edit-action-button,
+        .edit-dialog .edit-actions button {{
+            background-color: #0c0c0c;
+            background-image: linear-gradient(
+                to bottom,
+                #2a2a2a 0%,
+                #141414 45%,
+                #090909 100%
+            );
+            border-radius: 999px;
+            border: 1px solid #2b2b2b;
+            padding: 6px 14px;
+        }}
+        .browser-button label,
+        .browser-action-button label,
+        .add-action-button label,
+        .edit-action-button label,
+        .edit-dialog .edit-actions button label {{
+            color: #f2f2f2;
+        }}
+        .browser-button:hover,
+        .browser-action-button:hover,
+        .add-action-button:hover,
+        .edit-action-button:hover,
+        .edit-dialog .edit-actions button:hover {{
+            border-color: #d48b39;
+        }}
+        .browser-button:hover label,
+        .browser-action-button:hover label,
+        .add-action-button:hover label,
+        .edit-action-button:hover label,
+        .edit-dialog .edit-actions button:hover label {{
+            color: #d48b39;
+        }}
+        .browser-button:active,
+        .browser-action-button:active,
+        .add-action-button:active,
+        .edit-action-button:active,
+        .edit-dialog .edit-actions button:active {{
+            background-image: linear-gradient(
+                to bottom,
+                #0b0b0b 0%,
+                #1b1b1b 55%,
+                #2a2a2a 100%
+            );
+        }}
+
 
         window.app-window {{
             background-image: url("file://{background_image}");

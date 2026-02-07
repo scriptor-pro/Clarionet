@@ -1,5 +1,5 @@
 pkgname=clarionet
-pkgver=0.2.1
+pkgver=0.2.3
 pkgrel=1
 pkgdesc="Minimalist autoradio-style internet radio player"
 arch=("x86_64")

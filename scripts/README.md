@@ -13,7 +13,7 @@ Build:
 ```
 
 Output:
-- `dist/Clarionet.app`
+- `dist/packages/macos/Clarionet.app`
 
 ## Windows (Inno Setup)
 
@@ -28,7 +28,7 @@ Build (PowerShell):
 ```
 
 Output:
-- `dist/clarionet-setup.exe`
+- `dist/packages/windows/clarionet-setup.exe`
 
 ## Notes
 - Both scripts read version from `APP_VERSION` in `radiocity.py`.
