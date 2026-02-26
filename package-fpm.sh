@@ -2,7 +2,7 @@
 set -euo pipefail
 
 NAME="clarionet"
-VERSION="0.2.3"
+VERSION="87.5.025"
 DESC="Minimalist autoradio-style internet radio player"
 LICENSE="MIT"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,7 +26,7 @@ COMMON_ARGS=(
 FILE_ARGS=(
   "${ROOT_DIR}/clarionet=/usr/bin/clarionet"
   "${ROOT_DIR}/clarionet.desktop=/usr/share/applications/clarionet.desktop"
-  "${ROOT_DIR}/radiocity.py=/usr/share/clarionet/clarionet.py"
+  "${ROOT_DIR}/clarionet.py=/usr/share/clarionet/clarionet.py"
   "${ROOT_DIR}/assets/clarionet.svg=/usr/share/icons/hicolor/scalable/apps/clarionet.svg"
   "${ROOT_DIR}/README.md=/usr/share/doc/clarionet/README.md"
   "${ROOT_DIR}/LICENSE=/usr/share/licenses/clarionet/LICENSE"

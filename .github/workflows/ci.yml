@@ -1,0 +1,40 @@
+name: CI Smoke Tests
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  python-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile app
+        run: python3 -m py_compile clarionet.py
+
+  pages-smoke:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: page
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: page
+
+      - name: Build site
+        run: bundle exec jekyll build

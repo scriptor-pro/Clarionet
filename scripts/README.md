@@ -31,7 +31,7 @@ Output:
 - `dist/packages/windows/clarionet-setup.exe`
 
 ## Notes
-- Both scripts read version from `APP_VERSION` in `radiocity.py`.
+- Both scripts read version from `APP_VERSION` in `clarionet.py`.
 - Icons:
   - macOS uses `assets/icons/clarionet_icon_512x512.png` to build `.icns`.
   - Windows uses `assets/icons/clarionet.ico`.

@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $version = $env:VERSION
 if (-not $version) {
-  $versionLine = Select-String -Path "$root\radiocity.py" -Pattern '^APP_VERSION' | Select-Object -First 1
+  $versionLine = Select-String -Path "$root\clarionet.py" -Pattern '^APP_VERSION' | Select-Object -First 1
   if ($versionLine) {
     $version = $versionLine.Line.Split('"')[1]
   } else {
@@ -42,7 +42,7 @@ if (Test-Path $iconPath) {
   --distpath "$distDir" `
   --add-data "$root\assets;assets" `
   @iconArgs `
-  "$root\radiocity.py"
+  "$root\clarionet.py"
 
 $exeSource = Join-Path $distDir "clarionet\clarionet.exe"
 if (-not (Test-Path $exeSource)) {

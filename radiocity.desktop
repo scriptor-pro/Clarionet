@@ -1,9 +1,0 @@
-[Desktop Entry]
-Name=Clarionet
-Comment=Lecteur de radios en ligne
-TryExec=clarionet
-Exec=clarionet
-Icon=clarionet
-Terminal=false
-Type=Application
-Categories=Audio;Player;

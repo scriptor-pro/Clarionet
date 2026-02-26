@@ -1,5 +1,5 @@
 pkgname=clarionet
-pkgver=0.2.3
+pkgver=87.5.025
 pkgrel=1
 pkgdesc="Minimalist autoradio-style internet radio player"
 arch=("x86_64")
@@ -13,7 +13,7 @@ package() {
 exec /usr/bin/python3 /usr/share/clarionet/clarionet.py "$@"
 EOF
 
-  install -Dm644 "${srcdir}/radiocity.py" "${pkgdir}/usr/share/clarionet/clarionet.py"
+  install -Dm644 "${srcdir}/clarionet.py" "${pkgdir}/usr/share/clarionet/clarionet.py"
   install -Dm644 "${srcdir}/clarionet.desktop" "${pkgdir}/usr/share/applications/clarionet.desktop"
   install -Dm644 "${srcdir}/assets/clarionet.svg" "${pkgdir}/usr/share/icons/hicolor/scalable/apps/clarionet.svg"
   cp -r "${srcdir}/assets" "${pkgdir}/usr/share/clarionet/"

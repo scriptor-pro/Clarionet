@@ -16,7 +16,7 @@ Application Linux minimaliste pour ecouter des radios en ligne via GTK3 + mpv.
 
 ## Version
 
-0.2.3
+87.5.025
 
 ## Donnees
 

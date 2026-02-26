@@ -18,3 +18,15 @@ __pycache__/
 # Local config/cache
 .cache/
 notes/
+
+# Build artifacts
+dist/packages/linux/deb/*.deb
+dist/packages/linux/rpm/*.rpm
+dist/packages/linux/pacman/*.pkg.tar.zst
+dist/packages/macos/*.app/
+dist/packages/windows/*.exe
+dist/packages/windows/*.iss
+
+# Local screenshots
+2026-*.png
+interface-autoradio.png

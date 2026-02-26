@@ -35,10 +35,10 @@ Visit http://localhost:4000 to preview.
 
 ## Deployment
 
-The site is automatically deployed to GitHub Pages when pushing to the `page` branch.
+The site is automatically deployed to GitHub Pages when pushing to the `main` branch.
 
 GitHub Pages settings must use **GitHub Actions** as the deployment source.
-Workflow: `.github/workflows/pages.yml`
+Workflow: `.github/workflows/static.yml`
 
 ## Features
 

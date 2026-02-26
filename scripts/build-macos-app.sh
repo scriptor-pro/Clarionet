@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION=$(grep -E '^APP_VERSION' "$ROOT_DIR/radiocity.py" | head -n1 | cut -d '"' -f2)
+VERSION=$(grep -E '^APP_VERSION' "$ROOT_DIR/clarionet.py" | head -n1 | cut -d '"' -f2)
 VERSION=${VERSION:-0.0.0}
 
 VENV_DIR="$ROOT_DIR/.venv-macos"
@@ -62,6 +62,6 @@ fi
   --distpath "$DIST_DIR" \
   --add-data "$ROOT_DIR/assets:assets" \
   "${ICON_ARGS[@]}" \
-  "$ROOT_DIR/radiocity.py"
+  "$ROOT_DIR/clarionet.py"
 
 echo "Built $APP_NAME.app in $DIST_DIR"
