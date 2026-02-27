@@ -38,7 +38,7 @@ gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, Pango, PangoCairo
 
 APP_NAME = "Clarionet"
-APP_VERSION = "87.5.025"
+APP_VERSION = "87.5.026"
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 CONFIG_DIR = Path.home() / ".config" / "clarionet"
 RADIOS_PATH = CONFIG_DIR / "radios.json"
@@ -53,6 +53,7 @@ STATE_PLAYING = "playing"
 STATE_PAUSED = "paused"
 STATE_ERROR = "error"
 VOLUME_STEP = 1
+GOLDEN_RATIO = 1.61803398875
 MARQUEE_INITIAL_DELAY_MS = 5000
 MARQUEE_REPEAT_DELAY_MS = 30000
 MARQUEE_TICK_MS = 55
@@ -813,29 +814,28 @@ class ClarionetApp(Gtk.ApplicationWindow):
         self.volume_scale.set_visible(False)
         self.volume_scale.connect("value-changed", self.on_volume_changed)
 
-        self.volume_minus_button = Gtk.Button()
-        self.volume_plus_button = Gtk.Button()
+        self.volume_step_button = Gtk.Button()
+        self.volume_step_drawing = Gtk.DrawingArea()
         self.volume_repeat_id = None
         self.volume_repeat_delta = 0
-        self.volume_minus_button.set_image(
-            Gtk.Image.new_from_icon_name("pan-down-symbolic", Gtk.IconSize.BUTTON)
-        )
-        self.volume_plus_button.set_image(
-            Gtk.Image.new_from_icon_name("pan-up-symbolic", Gtk.IconSize.BUTTON)
-        )
-        self.volume_minus_button.set_always_show_image(True)
-        self.volume_plus_button.set_always_show_image(True)
+        self.volume_step_button.set_relief(Gtk.ReliefStyle.NONE)
+        self.volume_step_button.set_size_request(42, 42)
+        self.volume_step_drawing.set_size_request(42, 42)
+        self.volume_step_drawing.set_hexpand(True)
+        self.volume_step_drawing.set_vexpand(True)
+        self.volume_step_drawing.connect("draw", self.on_volume_step_draw)
+        self.volume_step_button.add(self.volume_step_drawing)
         self.volume_value_label = Gtk.Label(
             label=str(int(self.volume_scale.get_value())), xalign=0
         )
         self.volume_value_label.get_style_context().add_class("volume-value")
         self.volume_value_label.get_style_context().add_class("volume-accent")
-        self.volume_minus_button.get_style_context().add_class("volume-step")
-        self.volume_plus_button.get_style_context().add_class("volume-step")
-        self.volume_minus_button.connect("pressed", self.on_volume_press, -VOLUME_STEP)
-        self.volume_minus_button.connect("released", self.on_volume_release)
-        self.volume_plus_button.connect("pressed", self.on_volume_press, VOLUME_STEP)
-        self.volume_plus_button.connect("released", self.on_volume_release)
+        self.volume_step_button.get_style_context().add_class("volume-step")
+        self.volume_step_button.get_style_context().add_class("volume-split")
+        self.volume_step_button.connect("button-press-event", self.on_volume_step_press)
+        self.volume_step_button.connect(
+            "button-release-event", self.on_volume_step_release
+        )
 
         station_controls_box = Gtk.Box(spacing=6)
         station_controls_box.pack_start(self.station_prev_button, False, False, 0)
@@ -857,11 +857,10 @@ class ClarionetApp(Gtk.ApplicationWindow):
         self.preset_buttons = []
         self.preset_timers = {}
         self.preset_saved = set()
-        self.preset_button_height = 36
-        self.preset_button_width = int(self.preset_button_height * 1.618)
+        self.preset_button_height = 34
+        self.preset_button_width = int(round(self.preset_button_height * GOLDEN_RATIO))
         self.preset_css_provider = Gtk.CssProvider()
-        self.preset_css_provider.load_from_data(
-            b"""
+        preset_css = """
             .preset-button {
                 background-color: #0c0c0c;
                 background-image: linear-gradient(
@@ -881,7 +880,9 @@ class ClarionetApp(Gtk.ApplicationWindow):
                 color: #d48b39;
             }
             .preset-add {
-                padding: 6px 9px;
+                min-width: __PRESET_WIDTH__px;
+                min-height: __PRESET_HEIGHT__px;
+                padding: 0;
             }
             .preset-add image {
                 color: #d48b39;
@@ -907,6 +908,12 @@ class ClarionetApp(Gtk.ApplicationWindow):
                     0 1px 2px rgba(0, 0, 0, 0.6);
             }
             """
+        self.preset_css_provider.load_from_data(
+            (
+                preset_css.replace(
+                    "__PRESET_WIDTH__", str(self.preset_button_width)
+                ).replace("__PRESET_HEIGHT__", str(self.preset_button_height))
+            ).encode("utf-8")
         )
         screen = Gdk.Screen.get_default()
         if screen:
@@ -969,8 +976,7 @@ class ClarionetApp(Gtk.ApplicationWindow):
         self.volume_icon.set_size_request(40, 40)
         volume_box.pack_start(self.volume_icon, False, False, 0)
         volume_box.pack_start(self.volume_value_label, False, False, 0)
-        volume_box.pack_start(self.volume_plus_button, False, False, 0)
-        volume_box.pack_start(self.volume_minus_button, False, False, 0)
+        volume_box.pack_start(self.volume_step_button, False, False, 0)
         volume_box.set_halign(Gtk.Align.END)
 
         body_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
@@ -1083,14 +1089,11 @@ class ClarionetApp(Gtk.ApplicationWindow):
     def _build_add_station_button(self):
         menu = Gtk.Menu()
 
-        add_stream_item = Gtk.MenuItem(label="Ajouter une radio")
-        add_browser_item = Gtk.MenuItem(label="Importer Radio-Browser")
+        add_stream_item = Gtk.MenuItem(label="Ajouter une station")
 
         add_stream_item.connect("activate", lambda *_: self.on_add(None))
-        add_browser_item.connect("activate", lambda *_: self.on_add_browser())
 
         menu.append(add_stream_item)
-        menu.append(add_browser_item)
         menu.show_all()
 
         button = Gtk.MenuButton()
@@ -1749,12 +1752,9 @@ class ClarionetApp(Gtk.ApplicationWindow):
 
         actions_box = Gtk.Box(spacing=8)
         actions_box.get_style_context().add_class("edit-actions")
-        add_manual_button = Gtk.Button(label="Ajouter une radio")
-        add_browser_button = Gtk.Button(label="Importer Radio-Browser")
-        add_manual_button.get_style_context().add_class("edit-action-button")
-        add_browser_button.get_style_context().add_class("edit-action-button")
-        actions_box.pack_start(add_manual_button, False, False, 0)
-        actions_box.pack_start(add_browser_button, False, False, 0)
+        add_station_button = Gtk.Button(label="Ajouter une station")
+        add_station_button.get_style_context().add_class("edit-action-button")
+        actions_box.pack_start(add_station_button, False, False, 0)
         content.add(actions_box)
 
         separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
@@ -1836,16 +1836,11 @@ class ClarionetApp(Gtk.ApplicationWindow):
                 list_box.add(row)
             list_box.show_all()
 
-        def add_manual(_button):
+        def add_station(_button):
             self.on_add(parent=dialog)
             refresh_list()
 
-        def add_browser(_button):
-            self.on_add_browser(parent=dialog)
-            refresh_list()
-
-        add_manual_button.connect("clicked", add_manual)
-        add_browser_button.connect("clicked", add_browser)
+        add_station_button.connect("clicked", add_station)
 
         refresh_list()
         content.show_all()
@@ -1906,10 +1901,11 @@ class ClarionetApp(Gtk.ApplicationWindow):
 
     def on_add(self, *_, parent=None):
         dialog_parent = parent or self
-        dialog = Gtk.Dialog(title="Ajouter une radio", parent=dialog_parent, flags=0)
+        dialog = Gtk.Dialog(title="Ajouter une station", parent=dialog_parent, flags=0)
         dialog.get_style_context().add_class("app-window")
         cancel_button = dialog.add_button("Annuler", Gtk.ResponseType.CANCEL)
         ok_button = dialog.add_button("Ajouter", Gtk.ResponseType.OK)
+        dialog.set_default_size(560, 560)
 
         content = dialog.get_content_area()
         content.set_spacing(12)
@@ -1917,11 +1913,16 @@ class ClarionetApp(Gtk.ApplicationWindow):
         content.set_margin_bottom(8)
         content.set_margin_start(8)
         content.set_margin_end(8)
-        content.get_style_context().add_class("add-dialog")
+        content.get_style_context().add_class("browser-dialog")
 
-        title_label = Gtk.Label(label="Ajouter une radio", xalign=0)
+        title_label = Gtk.Label(label="Ajouter une station", xalign=0)
         title_label.get_style_context().add_class("dialog-title")
         content.add(title_label)
+
+        manual_label = Gtk.Label(label="Saisie manuelle", xalign=0)
+        manual_label.get_style_context().add_class("dialog-title")
+        content.add(manual_label)
+
         name_entry = Gtk.Entry()
         url_entry = Gtk.Entry()
         name_entry.get_style_context().add_class("add-entry")
@@ -1933,37 +1934,12 @@ class ClarionetApp(Gtk.ApplicationWindow):
         content.add(Gtk.Label(label="URL", xalign=0))
         content.add(url_entry)
 
-        cancel_button.get_style_context().add_class("add-action-button")
-        ok_button.get_style_context().add_class("add-action-button")
+        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        content.add(separator)
 
-        content.show_all()
-        response = dialog.run()
-        if response == Gtk.ResponseType.OK:
-            name = name_entry.get_text().strip()
-            url = url_entry.get_text().strip()
-            if name and url:
-                self.add_radios([{"name": name, "stream_url": url}])
-        dialog.destroy()
-
-    def on_add_browser(self, *_, parent=None):
-        dialog_parent = parent or self
-        dialog = Gtk.Dialog(title="Importer une radio", parent=dialog_parent, flags=0)
-        dialog.get_style_context().add_class("app-window")
-        cancel_button = dialog.add_button("Annuler", Gtk.ResponseType.CANCEL)
-        ok_button = dialog.add_button("Ajouter", Gtk.ResponseType.OK)
-        dialog.set_default_size(520, 480)
-
-        content = dialog.get_content_area()
-        content.set_spacing(12)
-        content.set_margin_top(8)
-        content.set_margin_bottom(8)
-        content.set_margin_start(8)
-        content.set_margin_end(8)
-        content.get_style_context().add_class("browser-dialog")
-
-        title_label = Gtk.Label(label="Importer depuis Radio-Browser", xalign=0)
-        title_label.get_style_context().add_class("dialog-title")
-        content.add(title_label)
+        browser_label = Gtk.Label(label="Recherche Radio-Browser", xalign=0)
+        browser_label.get_style_context().add_class("dialog-title")
+        content.add(browser_label)
 
         search_box = Gtk.Box(spacing=8)
         search_box.get_style_context().add_class("browser-search")
@@ -2013,10 +1989,9 @@ class ClarionetApp(Gtk.ApplicationWindow):
                 if station.get("hls"):
                     details.append("HLS")
                 base_label = f"{name} ({country})" if country else name
-                if details:
-                    label = f"{base_label} — {' · '.join(details)}"
-                else:
-                    label = base_label
+                label = (
+                    f"{base_label} — {' · '.join(details)}" if details else base_label
+                )
                 check = Gtk.CheckButton(label=label)
                 check.get_style_context().add_class("browser-check")
                 check.set_margin_start(8)
@@ -2063,21 +2038,47 @@ class ClarionetApp(Gtk.ApplicationWindow):
             self.fetch_radio_browser(query, on_result, on_error)
 
         search_button.connect("clicked", on_search_clicked)
+        search_entry.connect("activate", on_search_clicked)
 
-        cancel_button.get_style_context().add_class("browser-action-button")
-        ok_button.get_style_context().add_class("browser-action-button")
+        cancel_button.get_style_context().add_class("add-action-button")
+        ok_button.get_style_context().add_class("add-action-button")
 
         content.show_all()
-        response = dialog.run()
-        if response == Gtk.ResponseType.OK:
+        while True:
+            response = dialog.run()
+            if response != Gtk.ResponseType.OK:
+                break
+
+            name = name_entry.get_text().strip()
+            url = url_entry.get_text().strip()
+            if bool(name) ^ bool(url):
+                status_label.set_text(
+                    "Remplir Nom et URL, ou laisser les deux vides pour Radio-Browser."
+                )
+                continue
+
             selected = []
             for row in results_box.get_children():
                 check = row.get_child()
                 if check.get_active():
                     selected.append(row.station)
-            if selected:
-                self.add_radios(selected)
+
+            to_add = selected
+            if name and url:
+                to_add = [{"name": name, "stream_url": url}] + selected
+
+            if not to_add:
+                status_label.set_text(
+                    "Saisir une station manuelle ou cocher un resultat Radio-Browser."
+                )
+                continue
+
+            self.add_radios(to_add)
+            break
         dialog.destroy()
+
+    def on_add_browser(self, *_, parent=None):
+        self.on_add(parent=parent)
 
     def on_remove(self, _):
         row = self.listbox.get_selected_row()
@@ -2153,6 +2154,50 @@ class ClarionetApp(Gtk.ApplicationWindow):
         value = int(self.volume_scale.get_value()) + delta
         value = max(0, min(100, value))
         self.volume_scale.set_value(value)
+
+    def on_volume_step_draw(self, widget, cr):
+        allocation = widget.get_allocation()
+        width = float(allocation.width)
+        height = float(allocation.height)
+        center_x = width / 2.0
+        triangle_half = min(width, height) * 0.16
+
+        cr.set_source_rgba(0.83, 0.55, 0.22, 0.95)
+        top_center_y = height * 0.28
+        cr.move_to(center_x, top_center_y - triangle_half)
+        cr.line_to(center_x - triangle_half, top_center_y + triangle_half)
+        cr.line_to(center_x + triangle_half, top_center_y + triangle_half)
+        cr.close_path()
+        cr.fill()
+
+        bottom_center_y = height * 0.72
+        cr.move_to(center_x, bottom_center_y + triangle_half)
+        cr.line_to(center_x - triangle_half, bottom_center_y - triangle_half)
+        cr.line_to(center_x + triangle_half, bottom_center_y - triangle_half)
+        cr.close_path()
+        cr.fill()
+
+        cr.set_source_rgba(0.95, 0.95, 0.95, 0.22)
+        cr.set_line_width(1.0)
+        cr.move_to(width * 0.22, height / 2.0)
+        cr.line_to(width * 0.78, height / 2.0)
+        cr.stroke()
+        return False
+
+    def on_volume_step_press(self, widget, event):
+        if event.button != 1:
+            return False
+        delta = (
+            VOLUME_STEP
+            if event.y < (widget.get_allocated_height() / 2.0)
+            else -VOLUME_STEP
+        )
+        self.on_volume_press(widget, delta)
+        return False
+
+    def on_volume_step_release(self, _, _event):
+        self.on_volume_release()
+        return False
 
     def on_volume_press(self, _, delta):
         self.on_volume_step(None, delta)
@@ -2335,6 +2380,12 @@ class ClarionetApp(Gtk.ApplicationWindow):
                 inset 0 2px 0 rgba(255, 255, 255, 0.18),
                 inset 0 -3px 0 rgba(0, 0, 0, 0.9),
                 0 3px 6px rgba(0, 0, 0, 0.6);
+        }}
+        .footer button.volume-split {{
+            min-width: 42px;
+            min-height: 42px;
+            padding: 0;
+            border-radius: 8px;
         }}
         .footer button:active {{
             background-image: linear-gradient(

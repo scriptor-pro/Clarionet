@@ -26,7 +26,7 @@ languages:
   - en
 
 # Version
-version: "87.5.025"
+version: "87.5.026"
 
 # Social
 github_username: scriptor-pro
