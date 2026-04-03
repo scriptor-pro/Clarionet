@@ -2272,7 +2272,7 @@ class ClarionetApp(Gtk.ApplicationWindow):
                 check.set_margin_bottom(6)
                 check.connect("toggled", lambda *_: add_selected_button.set_sensitive(
                     any(
-                        r.get_child().get_active()
+                        r.get_child() is not None and r.get_child().get_active()
                         for r in results_list.get_children()
                     )
                 ))
