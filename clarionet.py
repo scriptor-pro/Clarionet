@@ -2156,6 +2156,49 @@ class ClarionetApp(Gtk.ApplicationWindow):
 
         build_station_rows()
 
+        sep1 = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        content.add(sep1)
+
+        manual_label = Gtk.Label(label="Ajouter manuellement", xalign=0)
+        manual_label.get_style_context().add_class("dialog-section-label")
+        content.add(manual_label)
+
+        manual_box = Gtk.Box(spacing=8)
+        name_entry = Gtk.Entry()
+        name_entry.set_placeholder_text("Nom")
+        name_entry.set_hexpand(True)
+        name_entry.get_style_context().add_class("add-entry")
+        url_entry = Gtk.Entry()
+        url_entry.set_placeholder_text("URL du stream")
+        url_entry.set_hexpand(True)
+        url_entry.get_style_context().add_class("add-entry")
+        add_manual_button = Gtk.Button(label="Ajouter")
+        add_manual_button.get_style_context().add_class("browser-button")
+        manual_box.pack_start(name_entry, True, True, 0)
+        manual_box.pack_start(url_entry, True, True, 0)
+        manual_box.pack_start(add_manual_button, False, False, 0)
+        content.add(manual_box)
+
+        manual_status = Gtk.Label(label="", xalign=0)
+        manual_status.get_style_context().add_class("browser-status")
+        content.add(manual_status)
+
+        def on_add_manual(_):
+            name = name_entry.get_text().strip()
+            url = url_entry.get_text().strip()
+            if not name or not url:
+                manual_status.set_text("Nom et URL requis.")
+                return
+            self.add_radios([{"name": name, "stream_url": url}])
+            name_entry.set_text("")
+            url_entry.set_text("")
+            manual_status.set_text(f"« {name} » ajoutée.")
+            build_station_rows()
+
+        add_manual_button.connect("clicked", on_add_manual)
+        name_entry.connect("activate", on_add_manual)
+        url_entry.connect("activate", on_add_manual)
+
         content.show_all()
         dialog.run()
         dialog.destroy()
