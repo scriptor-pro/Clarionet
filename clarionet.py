@@ -2199,6 +2199,140 @@ class ClarionetApp(Gtk.ApplicationWindow):
         name_entry.connect("activate", on_add_manual)
         url_entry.connect("activate", on_add_manual)
 
+        sep2 = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        content.add(sep2)
+
+        browser_label = Gtk.Label(label="Recherche Radio-Browser", xalign=0)
+        browser_label.get_style_context().add_class("dialog-section-label")
+        content.add(browser_label)
+
+        search_box = Gtk.Box(spacing=8)
+        search_box.get_style_context().add_class("browser-search")
+        search_entry = Gtk.Entry()
+        search_entry.set_placeholder_text("Recherche par nom")
+        search_entry.set_hexpand(True)
+        search_entry.get_style_context().add_class("browser-entry")
+        search_button = Gtk.Button(label="Rechercher")
+        search_button.get_style_context().add_class("browser-button")
+        search_box.pack_start(search_entry, True, True, 0)
+        search_box.pack_start(search_button, False, False, 0)
+        content.add(search_box)
+
+        browser_status = Gtk.Label(label="", xalign=0)
+        browser_status.get_style_context().add_class("browser-status")
+        content.add(browser_status)
+
+        results_list = Gtk.ListBox()
+        results_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        results_list.get_style_context().add_class("browser-list")
+        scrolled_results = Gtk.ScrolledWindow()
+        scrolled_results.set_vexpand(True)
+        scrolled_results.set_min_content_height(160)
+        scrolled_results.get_style_context().add_class("browser-scrolled")
+        scrolled_results.add(results_list)
+        content.add(scrolled_results)
+
+        add_selected_button = Gtk.Button(label="Ajouter la sélection")
+        add_selected_button.get_style_context().add_class("browser-button")
+        add_selected_button.set_halign(Gtk.Align.END)
+        add_selected_button.set_sensitive(False)
+        content.add(add_selected_button)
+
+        def clear_results():
+            for child in results_list.get_children():
+                results_list.remove(child)
+
+        def populate_results(stations, warning=None):
+            clear_results()
+            count = 0
+            for station in stations:
+                name = station.get("name", "").strip()
+                url = station.get("url_resolved") or station.get("url")
+                if not name or not url:
+                    continue
+                country = station.get("country", "").strip()
+                codec = station.get("codec", "").strip()
+                bitrate = station.get("bitrate")
+                details = []
+                if codec:
+                    details.append(codec.upper())
+                if bitrate:
+                    details.append(f"{bitrate} kbps")
+                if station.get("hls"):
+                    details.append("HLS")
+                base_label = f"{name} ({country})" if country else name
+                label_text = (
+                    f"{base_label} — {' · '.join(details)}" if details else base_label
+                )
+                check = Gtk.CheckButton(label=label_text)
+                check.get_style_context().add_class("browser-check")
+                check.set_margin_start(8)
+                check.set_margin_end(8)
+                check.set_margin_top(6)
+                check.set_margin_bottom(6)
+                check.connect("toggled", lambda *_: add_selected_button.set_sensitive(
+                    any(
+                        r.get_child().get_active()
+                        for r in results_list.get_children()
+                    )
+                ))
+                row = Gtk.ListBoxRow()
+                row.get_style_context().add_class("browser-result")
+                row.station = {
+                    "name": name,
+                    "stream_url": url,
+                    "homepage": station.get("homepage"),
+                    "favicon": station.get("favicon"),
+                }
+                row.add(check)
+                results_list.add(row)
+                count += 1
+                if count >= 25:
+                    break
+            results_list.show_all()
+            status_text = f"{count} résultat(s)"
+            if warning:
+                status_text += f" — {warning}"
+            browser_status.set_text(status_text)
+            search_button.set_sensitive(True)
+
+        def on_result(stations, warning=None):
+            populate_results(stations, warning)
+            return False
+
+        def on_error(message):
+            browser_status.set_text(f"Erreur : {message}")
+            search_button.set_sensitive(True)
+            return False
+
+        def on_search_clicked(_):
+            query = search_entry.get_text().strip()
+            if not query:
+                browser_status.set_text("Saisir un nom de station.")
+                return
+            browser_status.set_text("Recherche en cours…")
+            search_button.set_sensitive(False)
+            add_selected_button.set_sensitive(False)
+            self.fetch_radio_browser(query, on_result, on_error)
+
+        def on_add_selected(_):
+            selected = [
+                row.station
+                for row in results_list.get_children()
+                if row.get_child().get_active()
+            ]
+            if not selected:
+                return
+            self.add_radios(selected)
+            clear_results()
+            browser_status.set_text(f"{len(selected)} station(s) ajoutée(s).")
+            add_selected_button.set_sensitive(False)
+            build_station_rows()
+
+        search_button.connect("clicked", on_search_clicked)
+        search_entry.connect("activate", on_search_clicked)
+        add_selected_button.connect("clicked", on_add_selected)
+
         content.show_all()
         dialog.run()
         dialog.destroy()
