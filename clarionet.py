@@ -2747,6 +2747,16 @@ class ClarionetApp(Gtk.ApplicationWindow):
             color: #8a8a8a;
             font-size: 12px;
         }}
+        .dialog-section-label {{
+            font-weight: 600;
+            font-size: 13px;
+            color: #b3b3b3;
+            margin-top: 4px;
+        }}
+        .manage-station-name {{
+            font-size: 14px;
+            color: #f2f2f2;
+        }}
         .edit-list {{
             background-color: rgba(0, 0, 0, 0.45);
         }}
