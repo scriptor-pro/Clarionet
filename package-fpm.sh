@@ -2,7 +2,7 @@
 set -euo pipefail
 
 NAME="clarionet"
-VERSION="87.5.026"
+VERSION="87.5.027"
 DESC="Minimalist autoradio-style internet radio player"
 LICENSE="MIT"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
