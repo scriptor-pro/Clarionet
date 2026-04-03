@@ -2091,26 +2091,100 @@ class ClarionetApp(Gtk.ApplicationWindow):
         title_label.get_style_context().add_class("dialog-title")
         content.add(title_label)
 
+        stations_label = Gtk.Label(label="Stations enregistrées", xalign=0)
+        stations_label.get_style_context().add_class("dialog-section-label")
+        content.add(stations_label)
+
+        manage_list = Gtk.ListBox()
+        manage_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        manage_list.get_style_context().add_class("edit-list")
+        scrolled_stations = Gtk.ScrolledWindow()
+        scrolled_stations.set_min_content_height(200)
+        scrolled_stations.set_vexpand(False)
+        scrolled_stations.get_style_context().add_class("edit-scrolled")
+        scrolled_stations.add(manage_list)
+        content.add(scrolled_stations)
+
+        def build_station_rows():
+            for child in manage_list.get_children():
+                manage_list.remove(child)
+            sorted_radios = sorted(self.radios, key=lambda r: r["name"].lower())
+            for radio in sorted_radios:
+                row = Gtk.ListBoxRow()
+                row.radio_id = radio["id"]
+
+                name_label = Gtk.Label(label=radio["name"], xalign=0)
+                name_label.set_ellipsize(Pango.EllipsizeMode.END)
+                name_label.set_hexpand(True)
+                name_label.get_style_context().add_class("manage-station-name")
+
+                url_label = Gtk.Label(label=radio.get("stream_url", ""), xalign=0)
+                url_label.set_ellipsize(Pango.EllipsizeMode.END)
+                url_label.set_hexpand(True)
+                url_label.get_style_context().add_class("edit-url")
+
+                info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                info_box.set_hexpand(True)
+                info_box.pack_start(name_label, False, False, 0)
+                info_box.pack_start(url_label, False, False, 0)
+
+                delete_button = Gtk.Button()
+                delete_button.set_image(
+                    Gtk.Image.new_from_icon_name("user-trash-symbolic", Gtk.IconSize.BUTTON)
+                )
+                delete_button.set_relief(Gtk.ReliefStyle.NONE)
+                delete_button.set_tooltip_text("Supprimer")
+                delete_button.get_style_context().add_class("edit-delete-button")
+
+                def on_delete(btn, rid=radio["id"], lrow=row):
+                    self.remove_radio_by_id(rid)
+                    manage_list.remove(lrow)
+
+                delete_button.connect("clicked", on_delete)
+
+                row_box = Gtk.Box(spacing=8)
+                row_box.set_margin_start(8)
+                row_box.set_margin_end(8)
+                row_box.set_margin_top(6)
+                row_box.set_margin_bottom(6)
+                row_box.get_style_context().add_class("edit-row")
+                row_box.pack_start(info_box, True, True, 0)
+                row_box.pack_start(delete_button, False, False, 0)
+                row.add(row_box)
+                manage_list.add(row)
+            manage_list.show_all()
+
+        build_station_rows()
+
         content.show_all()
         dialog.run()
         dialog.destroy()
+
+    def remove_radio_by_id(self, radio_id):
+        if radio_id == self.playing_id:
+            self.on_stop(None)
+            self.playing_id = None
+            self.playing_name = None
+        row_to_remove = next(
+            (r for r in self.listbox.get_children() if r.radio_id == radio_id),
+            None,
+        )
+        if row_to_remove:
+            self.listbox.remove(row_to_remove)
+        self.radios = [r for r in self.radios if r["id"] != radio_id]
+        if self.config.get("last_radio_id") == radio_id:
+            self.config["last_radio_id"] = None
+            save_json(CONFIG_PATH, self.config)
+        save_json(RADIOS_PATH, self.radios)
+        self.refresh_row_styles()
+        self.refresh_preset_labels()
 
     def on_remove(self, _):
         row = self.listbox.get_selected_row()
         if not row:
             return
-        if row.radio_id == self.playing_id:
-            self.on_stop(None)
-            self.playing_id = None
-            self.playing_name = None
-        self.listbox.remove(row)
-        self.radios = [radio for radio in self.radios if radio["id"] != row.radio_id]
-        if self.config.get("last_radio_id") == row.radio_id:
-            self.config["last_radio_id"] = None
-            save_json(CONFIG_PATH, self.config)
-        save_json(RADIOS_PATH, self.radios)
+        self.remove_radio_by_id(row.radio_id)
         self.current_label.set_text("-")
-        self.refresh_row_styles()
 
     def on_play(self, _):
         row = self.listbox.get_selected_row()
