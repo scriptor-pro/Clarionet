@@ -2072,6 +2072,29 @@ class ClarionetApp(Gtk.ApplicationWindow):
     def on_add_browser(self, *_, parent=None):
         self.on_add(parent=parent)
 
+    def on_manage_stations(self, *_):
+        dialog = Gtk.Dialog(title="Modifier les stations", parent=self, flags=0)
+        dialog.get_style_context().add_class("app-window")
+        close_button = dialog.add_button("Fermer", Gtk.ResponseType.CLOSE)
+        close_button.get_style_context().add_class("edit-action-button")
+        dialog.set_default_size(600, 620)
+
+        content = dialog.get_content_area()
+        content.set_spacing(12)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+        content.set_margin_start(8)
+        content.set_margin_end(8)
+        content.get_style_context().add_class("edit-dialog")
+
+        title_label = Gtk.Label(label="Modifier les stations", xalign=0)
+        title_label.get_style_context().add_class("dialog-title")
+        content.add(title_label)
+
+        content.show_all()
+        dialog.run()
+        dialog.destroy()
+
     def on_remove(self, _):
         row = self.listbox.get_selected_row()
         if not row:
