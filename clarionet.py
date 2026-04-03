@@ -1087,20 +1087,12 @@ class ClarionetApp(Gtk.ApplicationWindow):
         return tray
 
     def _build_add_station_button(self):
-        menu = Gtk.Menu()
-
-        add_stream_item = Gtk.MenuItem(label="Ajouter une station")
-
-        add_stream_item.connect("activate", lambda *_: self.on_add(None))
-
-        menu.append(add_stream_item)
-        menu.show_all()
-
-        button = Gtk.MenuButton()
+        button = Gtk.Button()
         button.set_image(
             self.load_custom_icon("lucide-radio-tower.svg", "list-add-symbolic", 22)
         )
-        button.set_popup(menu)
+        button.set_tooltip_text("Modifier les stations")
+        button.connect("clicked", self.on_manage_stations)
         button.get_style_context().add_class("preset-button")
         button.get_style_context().add_class("preset-add")
         return button
@@ -1281,7 +1273,7 @@ class ClarionetApp(Gtk.ApplicationWindow):
         control_pressed = bool(event.state & Gdk.ModifierType.CONTROL_MASK)
 
         if control_pressed and event.keyval in (Gdk.KEY_n, Gdk.KEY_N):
-            self.on_add(parent=self)
+            self.on_manage_stations(None)
             return True
         if control_pressed and event.keyval in (Gdk.KEY_q, Gdk.KEY_Q):
             self.quit_app()
@@ -1295,16 +1287,16 @@ class ClarionetApp(Gtk.ApplicationWindow):
         if event.keyval in (Gdk.KEY_s, Gdk.KEY_S):
             self.on_stop(None)
             return True
-        if event.keyval == Gdk.KEY_Left:
-            self.adjust_volume(-VOLUME_STEP)
-            return True
-        if event.keyval == Gdk.KEY_Right:
+        if event.keyval == Gdk.KEY_Up:
             self.adjust_volume(VOLUME_STEP)
             return True
-        if event.keyval == Gdk.KEY_Up:
+        if event.keyval == Gdk.KEY_Down:
+            self.adjust_volume(-VOLUME_STEP)
+            return True
+        if event.keyval == Gdk.KEY_Left:
             self.move_selection(-1)
             return True
-        if event.keyval == Gdk.KEY_Down:
+        if event.keyval == Gdk.KEY_Right:
             self.move_selection(1)
             return True
         return False
