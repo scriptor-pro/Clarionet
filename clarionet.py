@@ -2161,16 +2161,23 @@ class ClarionetApp(Gtk.ApplicationWindow):
         dialog.destroy()
 
     def remove_radio_by_id(self, radio_id):
-        if radio_id == self.playing_id:
-            self.on_stop(None)
+        was_playing = (radio_id == self.playing_id)
+        if was_playing:
+            try:
+                self.mpv.stop()
+            except RuntimeError:
+                pass
             self.playing_id = None
             self.playing_name = None
+            self.set_state(STATE_IDLE)
         row_to_remove = next(
             (r for r in self.listbox.get_children() if r.radio_id == radio_id),
             None,
         )
         if row_to_remove:
             self.listbox.remove(row_to_remove)
+        if self.selected_row is not None and self.selected_row.radio_id == radio_id:
+            self.selected_row = None
         self.radios = [r for r in self.radios if r["id"] != radio_id]
         if self.config.get("last_radio_id") == radio_id:
             self.config["last_radio_id"] = None
@@ -2178,6 +2185,8 @@ class ClarionetApp(Gtk.ApplicationWindow):
         save_json(RADIOS_PATH, self.radios)
         self.refresh_row_styles()
         self.refresh_preset_labels()
+        if was_playing:
+            self.current_label.set_text("-")
 
     def on_remove(self, _):
         row = self.listbox.get_selected_row()
