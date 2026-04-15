@@ -2722,6 +2722,7 @@ class ClarionetApp(Gtk.ApplicationWindow):
             background-position: center;
             background-size: cover;
             font-family: "Inter", sans-serif;
+            border-radius: 16px;
         }}
         """
         self.css_provider.load_from_data(css.encode("utf-8"))
