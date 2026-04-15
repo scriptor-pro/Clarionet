@@ -38,7 +38,7 @@ gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, Pango, PangoCairo
 
 APP_NAME = "Clarionet"
-APP_VERSION = "87.5.027"
+APP_VERSION = "87.5.028"
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 CONFIG_DIR = Path.home() / ".config" / "clarionet"
 RADIOS_PATH = CONFIG_DIR / "radios.json"
