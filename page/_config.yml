@@ -1,6 +1,6 @@
 # Site settings
 title: Clarionet
-description: Minimalist Linux radio player with autoradio-style interface
+description: Minimalist radio player for Linux, Windows and macOS with autoradio-style interface
 lang: fr
 baseurl: "/Clarionet" # e.g., /Clarionet/
 url: "https://scriptor-pro.github.io" # base hostname & protocol
@@ -26,7 +26,7 @@ languages:
   - en
 
 # Version
-version: "87.5.026"
+version: "87.5.027"
 
 # Social
 github_username: scriptor-pro

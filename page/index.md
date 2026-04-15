@@ -1,7 +1,7 @@
 ---
 layout: page
-lede_fr: "Une interface rapide et locale, inspirée des autoradios des années 80, pensée pour écouter sans distraction."
-lede_en: "A fast and local interface inspired by 80s car radios, designed for distraction-free listening."
+lede_fr: "Une interface rapide et locale, inspirée des autoradios des années 80, pensée pour écouter sans distraction. Disponible sur Linux, Windows et macOS."
+lede_en: "A fast and local interface inspired by 80s car radios, designed for distraction-free listening. Available on Linux, Windows and macOS."
 ---
 
 <div class="hero">
@@ -93,6 +93,38 @@ sudo dnf install clarionet-{{ site.version }}-1.x86_64.rpm</code></pre>
 paru -S clarionet-git</code></pre>
         </div>
       </div>
+
+      <div class="install-card">
+        <div class="install-header">
+          <h3 class="fr">Windows</h3>
+          <h3 class="en">Windows</h3>
+          <span class="install-badge">10+</span>
+        </div>
+        <div class="install-body">
+          <p class="fr"><strong>Prérequis :</strong> Python 3.8+ et mpv</p>
+          <p class="en"><strong>Requirements :</strong> Python 3.8+ and mpv</p>
+          <pre><code>git clone https://github.com/{{ site.github_username }}/{{ site.github_repo }}.git
+cd Clarionet
+pip install -r requirements.txt
+python clarionet.py</code></pre>
+        </div>
+      </div>
+
+      <div class="install-card">
+        <div class="install-header">
+          <h3>macOS</h3>
+          <span class="install-badge">10.13+</span>
+        </div>
+        <div class="install-body">
+          <p class="fr"><strong>Avec Homebrew (recommandé) :</strong></p>
+          <p class="en"><strong>With Homebrew (recommended) :</strong></p>
+          <pre><code>brew install python3 gtk3 mpv
+git clone https://github.com/{{ site.github_username }}/{{ site.github_repo }}.git
+cd Clarionet
+pip3 install -r requirements.txt
+python3 clarionet.py</code></pre>
+        </div>
+      </div>
     </div>
 
     <div class="dependencies">
@@ -149,6 +181,11 @@ paru -S clarionet-git</code></pre>
             <td class="en">Add a radio</td>
           </tr>
           <tr>
+            <td><kbd>Ctrl</kbd> + <kbd>M</kbd></td>
+            <td class="fr">Gérer les stations</td>
+            <td class="en">Manage stations</td>
+          </tr>
+          <tr>
             <td><kbd>Ctrl</kbd> + <kbd>Q</kbd></td>
             <td class="fr">Quitter</td>
             <td class="en">Quit</td>
@@ -197,9 +234,9 @@ paru -S clarionet-git</code></pre>
           <h4 class="en">Privacy first</h4>
         </div>
         <div class="value-item">
-          <div class="value-icon">⚙️</div>
-          <h4 class="fr">Intégration Linux native</h4>
-          <h4 class="en">Native Linux integration</h4>
+          <div class="value-icon">🖥️</div>
+          <h4 class="fr">Multi-plateforme</h4>
+          <h4 class="en">Cross-platform</h4>
         </div>
       </div>
     </div>
