@@ -26,7 +26,7 @@ lede_en: "A fast and local interface inspired by 80s car radios, designed for di
 <section class="section">
   <div class="container">
     <div class="preview">
-      <img src="{{ '/assets/screenshots/clarionet-main.png' | prepend: site.baseurl }}" alt="Clarionet interface" loading="lazy" />
+      <img src="{{ '/assets/screenshots/clarionet-main-150426.webp' | prepend: site.baseurl }}" alt="Clarionet interface" loading="lazy" />
     </div>
   </div>
 </section>
