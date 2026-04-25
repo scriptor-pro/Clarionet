@@ -8,11 +8,13 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import webbrowser
 import urllib.parse
 import urllib.request
 import urllib.error
 from pathlib import Path
+from datetime import datetime
 import shutil
 import ssl
 import uuid
@@ -47,6 +49,7 @@ MPV_SOCKET = CONFIG_DIR / "mpv.sock"
 ICONS_DIR = CONFIG_DIR / "icons"
 LOG_PATH = CONFIG_DIR / "clarionet.log"
 MPV_LOG_PATH = CONFIG_DIR / "clarionet-mpv.log"
+CRASHES_DIR = CONFIG_DIR / "crashes"
 STATE_IDLE = "idle"
 STATE_LOADING = "loading"
 STATE_PLAYING = "playing"
@@ -64,6 +67,7 @@ DIGITAL_FONT_PATH = (
 DIGITAL_FONT_FAMILY = "Segment14"
 
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+CRASHES_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
     filename=str(LOG_PATH),
     level=logging.INFO,
@@ -81,6 +85,93 @@ warnings.filterwarnings(
     message=".*set_wmclass.*deprecated.*",
     category=DeprecationWarning,
 )
+
+
+def create_crash_report(exc_type, exc_value, tb):
+    """Crée et enregistre un rapport de plantage détaillé."""
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    crash_id = f"crash_{timestamp}_{uuid.uuid4().hex[:8]}"
+    crash_file = CRASHES_DIR / f"{crash_id}.json"
+
+    tb_lines = traceback.format_exception(exc_type, exc_value, tb)
+    crash_data = {
+        "crash_id": crash_id,
+        "timestamp": timestamp,
+        "app_name": APP_NAME,
+        "app_version": APP_VERSION,
+        "exception_type": exc_type.__name__,
+        "exception_message": str(exc_value),
+        "traceback": "".join(tb_lines),
+        "python_version": sys.version,
+        "platform": sys.platform,
+    }
+
+    try:
+        with open(crash_file, "w", encoding="utf-8") as f:
+            json.dump(crash_data, f, indent=2, ensure_ascii=False)
+        logger.error("Crash report saved to %s", crash_file)
+        return crash_id, crash_file
+    except Exception as e:
+        logger.error("Failed to save crash report: %s", e)
+        return crash_id, None
+
+
+def setup_crash_handler():
+    """Configure le gestionnaire global d'exceptions non gérées."""
+    def handle_exception(exc_type, exc_value, tb):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, tb)
+            return
+
+        logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, tb))
+        crash_id, crash_file = create_crash_report(exc_type, exc_value, tb)
+
+        sys.__excepthook__(exc_type, exc_value, tb)
+
+    sys.excepthook = handle_exception
+
+
+def check_for_pending_crash_reports(window):
+    """Vérifie et affiche les rapports de plantage en attente."""
+    try:
+        crash_files = sorted(CRASHES_DIR.glob("crash_*.json"))
+        if not crash_files:
+            return
+
+        recent_crashes = crash_files[-5:]
+
+        for crash_file in recent_crashes:
+            try:
+                with open(crash_file, "r", encoding="utf-8") as f:
+                    crash_data = json.load(f)
+
+                message = (
+                    f"Clarionet s'est planté précédemment.\n\n"
+                    f"Type d'erreur: {crash_data.get('exception_type', 'Inconnu')}\n"
+                    f"Message: {crash_data.get('exception_message', 'N/A')}\n"
+                    f"Heure: {crash_data.get('timestamp', 'N/A')}\n\n"
+                    f"Rapport ID: {crash_data.get('crash_id', 'N/A')}"
+                )
+
+                dialog = Gtk.MessageDialog(
+                    parent=window,
+                    flags=0,
+                    message_type=Gtk.MessageType.WARNING,
+                    buttons=Gtk.ButtonsType.OK,
+                    text="Rapport de plantage précédent",
+                )
+                dialog.format_secondary_text(message)
+                dialog.run()
+                dialog.destroy()
+
+                logger.info("Crash report acknowledged: %s", crash_file.name)
+            except json.JSONDecodeError:
+                logger.error("Invalid crash report: %s", crash_file)
+            except Exception as e:
+                logger.error("Failed to read crash report: %s", e)
+    except Exception as e:
+        logger.error("Failed to check crash reports: %s", e)
+
 
 DEFAULT_RADIOS = [
     {
@@ -2946,6 +3037,24 @@ class ClarionetApp(Gtk.ApplicationWindow):
         dialog.run()
         dialog.destroy()
 
+    def report_exception(self, exc_type, exc_value, exc_tb, show_dialog=False):
+        """Enregistre une exception et l'ajoute au rapport de plantage."""
+        try:
+            crash_id, crash_file = create_crash_report(exc_type, exc_value, exc_tb)
+            logger.error(
+                "Exception reported: %s (%s) - Report ID: %s",
+                exc_type.__name__,
+                str(exc_value),
+                crash_id,
+            )
+
+            if show_dialog and crash_file:
+                error_msg = f"{exc_type.__name__}: {str(exc_value)}\n\n" \
+                           f"Le rapport a été sauvegardé:\n{crash_file}"
+                self.show_error(error_msg)
+        except Exception as e:
+            logger.error("Failed to report exception: %s", e)
+
 
 class ClarionetApplication(Gtk.Application):
     def __init__(self):
@@ -2954,10 +3063,12 @@ class ClarionetApplication(Gtk.Application):
     def do_activate(self):
         logger.info("Start %s %s", APP_NAME, APP_VERSION)
         window = ClarionetApp(self)
+        check_for_pending_crash_reports(window)
         window.show_all()
 
 
 if __name__ == "__main__":
+    setup_crash_handler()
     app = ClarionetApplication()
     exit_code = app.run(sys.argv)
     sys.exit(exit_code)
