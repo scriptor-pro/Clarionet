@@ -10,11 +10,11 @@
       <stop offset="100%" stop-color="#D9C9A8"/>
     </linearGradient>
 
-    <!-- corps du poste : orange chaud, signature Clarionet -->
+    <!-- corps du poste : brun acajou clair, signature Clarionet -->
     <linearGradient id="bodyOrange" x1="15%" y1="0%" x2="85%" y2="100%">
-      <stop offset="0%" stop-color="#FF9D5C"/>
-      <stop offset="45%" stop-color="#F2723A"/>
-      <stop offset="100%" stop-color="#C9481B"/>
+      <stop offset="0%" stop-color="#DBA07C"/>
+      <stop offset="45%" stop-color="#B8734A"/>
+      <stop offset="100%" stop-color="#8A4B2A"/>
     </linearGradient>
 
     <linearGradient id="handleMetal" x1="0%" y1="0%" x2="0%" y2="100%">
@@ -51,14 +51,10 @@
     </filter>
   </defs>
 
-  <rect x="0" y="0" width="1024" height="1024" fill="url(#bg4)"/>
-  <rect x="46" y="46" width="932" height="932" rx="200" fill="url(#panel4)"/>
   <rect x="46" y="46" width="932" height="932" rx="200" fill="none" stroke="#C4A96F" stroke-width="4" opacity="0.5"/>
 
   <g filter="url(#softShadow4)">
-    <!-- poignée arquée -->
-    <path d="M 362 288 A 150 150 0 0 1 662 288" fill="none" stroke="url(#handleMetal)" stroke-width="34" stroke-linecap="round"/>
-
+    <g transform="translate(512 512) scale(1.45) translate(-512 -512)">
     <!-- corps du poste, rectangle large arrondi -->
     <rect x="182" y="270" width="660" height="500" rx="64" fill="url(#bodyOrange)"/>
     <rect x="182" y="270" width="660" height="500" rx="64" fill="none" stroke="#9C3A14" stroke-width="4" opacity="0.35"/>
@@ -102,5 +98,6 @@
     <!-- molette de droite : repère vert acide, radio allumée -->
     <circle cx="754" cy="688" r="26" fill="url(#ledGlow)"/>
     <rect x="748" y="676" width="12" height="24" rx="5" fill="#8CFF1E"/>
+    </g>
   </g>
 </svg>

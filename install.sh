@@ -105,11 +105,5 @@ MinSize=8
 MaxSize=512
 EOF
   fi
-  gtk-update-icon-cache "${XDG_DATA_HOME}/icons/hicolor"
-  for size in 16 24 32 48 64 96 128 256 512; do
-    cache_dir="${XDG_DATA_HOME}/icons/hicolor/${size}x${size}"
-    if [ -d "${cache_dir}" ]; then
-      gtk-update-icon-cache "${cache_dir}"
-    fi
-  done
+  gtk-update-icon-cache "${XDG_DATA_HOME}/icons/hicolor" || true
 fi
