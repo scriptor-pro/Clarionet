@@ -905,28 +905,17 @@ class ClarionetApp(Gtk.ApplicationWindow):
         self.volume_scale.set_visible(False)
         self.volume_scale.connect("value-changed", self.on_volume_changed)
 
-        self.volume_step_button = Gtk.Button()
-        self.volume_step_drawing = Gtk.DrawingArea()
         self.volume_repeat_id = None
         self.volume_repeat_delta = 0
-        self.volume_step_button.set_relief(Gtk.ReliefStyle.NONE)
-        self.volume_step_button.set_size_request(42, 42)
-        self.volume_step_drawing.set_size_request(42, 42)
-        self.volume_step_drawing.set_hexpand(True)
-        self.volume_step_drawing.set_vexpand(True)
-        self.volume_step_drawing.connect("draw", self.on_volume_step_draw)
-        self.volume_step_button.add(self.volume_step_drawing)
+        self.volume_down_button = self._make_volume_button(-VOLUME_STEP)
+        self.volume_up_button = self._make_volume_button(VOLUME_STEP)
+        self.volume_down_button.set_tooltip_text("Baisser le volume")
+        self.volume_up_button.set_tooltip_text("Monter le volume")
         self.volume_value_label = Gtk.Label(
             label=str(int(self.volume_scale.get_value())), xalign=0
         )
         self.volume_value_label.get_style_context().add_class("volume-value")
         self.volume_value_label.get_style_context().add_class("volume-accent")
-        self.volume_step_button.get_style_context().add_class("volume-step")
-        self.volume_step_button.get_style_context().add_class("volume-split")
-        self.volume_step_button.connect("button-press-event", self.on_volume_step_press)
-        self.volume_step_button.connect(
-            "button-release-event", self.on_volume_step_release
-        )
 
         station_controls_box = Gtk.Box(spacing=6)
         station_controls_box.pack_start(self.station_prev_button, False, False, 0)
@@ -1067,7 +1056,12 @@ class ClarionetApp(Gtk.ApplicationWindow):
         self.volume_icon.set_size_request(40, 40)
         volume_box.pack_start(self.volume_icon, False, False, 0)
         volume_box.pack_start(self.volume_value_label, False, False, 0)
-        volume_box.pack_start(self.volume_step_button, False, False, 0)
+        # Wide gap between − and + so a slightly off click can't hit the wrong one.
+        volume_buttons_box = Gtk.Box(spacing=16)
+        volume_buttons_box.pack_start(self.volume_down_button, False, False, 0)
+        volume_buttons_box.pack_start(self.volume_up_button, False, False, 0)
+        volume_buttons_box.set_valign(Gtk.Align.CENTER)
+        volume_box.pack_start(volume_buttons_box, False, False, 4)
         volume_box.set_halign(Gtk.Align.END)
 
         body_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
@@ -2347,43 +2341,42 @@ class ClarionetApp(Gtk.ApplicationWindow):
         value = max(0, min(100, value))
         self.volume_scale.set_value(value)
 
-    def on_volume_step_draw(self, widget, cr):
-        allocation = widget.get_allocation()
-        width = float(allocation.width)
-        height = float(allocation.height)
+    def _make_volume_button(self, delta):
+        button = Gtk.Button()
+        button.set_relief(Gtk.ReliefStyle.NONE)
+        button.set_size_request(42, 42)
+        drawing = Gtk.DrawingArea()
+        drawing.set_size_request(42, 42)
+        drawing.set_hexpand(True)
+        drawing.set_vexpand(True)
+        drawing.connect("draw", self.on_volume_arrow_draw, delta > 0)
+        button.add(drawing)
+        context = button.get_style_context()
+        context.add_class("volume-step")
+        context.add_class("volume-arrow")
+        button.connect("button-press-event", self.on_volume_button_press, delta)
+        button.connect("button-release-event", self.on_volume_step_release)
+        return button
+
+    def on_volume_arrow_draw(self, widget, cr, pointing_up):
+        width = float(widget.get_allocated_width())
+        height = float(widget.get_allocated_height())
         center_x = width / 2.0
-        triangle_half = min(width, height) * 0.16
+        center_y = height / 2.0
+        half = min(width, height) * 0.22
 
         cr.set_source_rgba(0.83, 0.55, 0.22, 0.95)
-        top_center_y = height * 0.28
-        cr.move_to(center_x, top_center_y - triangle_half)
-        cr.line_to(center_x - triangle_half, top_center_y + triangle_half)
-        cr.line_to(center_x + triangle_half, top_center_y + triangle_half)
+        tip = -half if pointing_up else half
+        cr.move_to(center_x, center_y + tip)
+        cr.line_to(center_x - half, center_y - tip)
+        cr.line_to(center_x + half, center_y - tip)
         cr.close_path()
         cr.fill()
-
-        bottom_center_y = height * 0.72
-        cr.move_to(center_x, bottom_center_y + triangle_half)
-        cr.line_to(center_x - triangle_half, bottom_center_y - triangle_half)
-        cr.line_to(center_x + triangle_half, bottom_center_y - triangle_half)
-        cr.close_path()
-        cr.fill()
-
-        cr.set_source_rgba(0.95, 0.95, 0.95, 0.22)
-        cr.set_line_width(1.0)
-        cr.move_to(width * 0.22, height / 2.0)
-        cr.line_to(width * 0.78, height / 2.0)
-        cr.stroke()
         return False
 
-    def on_volume_step_press(self, widget, event):
+    def on_volume_button_press(self, widget, event, delta):
         if event.button != 1:
             return False
-        delta = (
-            VOLUME_STEP
-            if event.y < (widget.get_allocated_height() / 2.0)
-            else -VOLUME_STEP
-        )
         self.on_volume_press(widget, delta)
         return False
 
@@ -2573,7 +2566,7 @@ class ClarionetApp(Gtk.ApplicationWindow):
                 inset 0 -3px 0 rgba(0, 0, 0, 0.9),
                 0 3px 6px rgba(0, 0, 0, 0.6);
         }}
-        .footer button.volume-split {{
+        .footer button.volume-arrow {{
             min-width: 42px;
             min-height: 42px;
             padding: 0;
