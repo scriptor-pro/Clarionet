@@ -66,7 +66,7 @@ cd Clarionet
           <span class="install-badge">.deb</span>
         </div>
         <div class="install-body">
-          <pre><code>wget https://github.com/{{ site.github_username }}/{{ site.github_repo }}/releases/download/v{{ site.version }}/clarionet_{{ site.version }}_amd64.deb
+          <pre><code>wget https://github.com/{{ site.github_username }}/{{ site.github_repo }}/releases/download/{{ site.version }}/clarionet_{{ site.version }}_amd64.deb
 sudo dpkg -i clarionet_{{ site.version }}_amd64.deb</code></pre>
         </div>
       </div>
@@ -77,7 +77,7 @@ sudo dpkg -i clarionet_{{ site.version }}_amd64.deb</code></pre>
           <span class="install-badge">.rpm</span>
         </div>
         <div class="install-body">
-          <pre><code>wget https://github.com/{{ site.github_username }}/{{ site.github_repo }}/releases/download/v{{ site.version }}/clarionet-{{ site.version }}-1.x86_64.rpm
+          <pre><code>wget https://github.com/{{ site.github_username }}/{{ site.github_repo }}/releases/download/{{ site.version }}/clarionet-{{ site.version }}-1.x86_64.rpm
 sudo dnf install clarionet-{{ site.version }}-1.x86_64.rpm</code></pre>
         </div>
       </div>
@@ -88,6 +88,10 @@ sudo dnf install clarionet-{{ site.version }}-1.x86_64.rpm</code></pre>
           <span class="install-badge">AUR</span>
         </div>
         <div class="install-body">
+          <pre><code>wget https://github.com/{{ site.github_username }}/{{ site.github_repo }}/releases/download/{{ site.version }}/clarionet-{{ site.version }}-1-x86_64.pkg.tar.zst
+sudo pacman -U clarionet-{{ site.version }}-1-x86_64.pkg.tar.zst</code></pre>
+          <p class="install-note fr">Ou depuis l'AUR :</p>
+          <p class="install-note en">Or from the AUR:</p>
           <pre><code>yay -S clarionet-git
 # ou
 paru -S clarionet-git</code></pre>
