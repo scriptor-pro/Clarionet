@@ -68,7 +68,8 @@ a:hover {
   padding: 0 24px;
 }
 
-.en {
+/* Masqué tant que la page n'est pas en anglais (setLanguage met lang="en") */
+html:not([lang="en"]) .en {
   display: none;
 }
 
@@ -396,6 +397,110 @@ a:hover {
   font-family: 'SF Mono', 'Fira Code', 'Roboto Mono', monospace;
   font-size: 14px;
   line-height: 1.6;
+}
+
+/* Bouton de copie des commandes */
+.code-block {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding-right: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.code-block pre {
+  flex: 1;
+  min-width: 0;
+}
+
+.code-block + .install-note,
+.install-note + .code-block {
+  margin-top: 12px;
+}
+
+.code-block code {
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+
+.copy-btn {
+  position: relative;
+  flex-shrink: 0;
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.copy-btn:hover,
+.copy-btn:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+  outline: none;
+}
+
+.copy-btn .icon-check {
+  display: none;
+}
+
+.copy-btn.copied {
+  color: #6fcf6f;
+  border-color: #6fcf6f;
+}
+
+.copy-btn.copied .icon-copy {
+  display: none;
+}
+
+.copy-btn.copied .icon-check {
+  display: block;
+}
+
+.copy-btn.copy-error {
+  color: #e06c6c;
+  border-color: #e06c6c;
+}
+
+.copy-btn.copied::after,
+.copy-btn.copy-error::after {
+  content: attr(data-feedback);
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  border: 1px solid currentColor;
+  color: inherit;
+  font-family: var(--font-family);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .install-note {

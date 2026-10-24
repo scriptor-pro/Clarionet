@@ -92,9 +92,10 @@ sudo dnf install clarionet-{{ site.version }}-1.x86_64.rpm</code></pre>
 sudo pacman -U clarionet-{{ site.version }}-1-x86_64.pkg.tar.zst</code></pre>
           <p class="install-note fr">Ou depuis l'AUR :</p>
           <p class="install-note en">Or from the AUR:</p>
-          <pre><code>yay -S clarionet-git
-# ou
-paru -S clarionet-git</code></pre>
+          <pre><code>yay -S clarionet-git</code></pre>
+          <p class="install-note fr">ou avec paru :</p>
+          <p class="install-note en">or with paru:</p>
+          <pre><code>paru -S clarionet-git</code></pre>
         </div>
       </div>
 
