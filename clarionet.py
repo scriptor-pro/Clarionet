@@ -40,12 +40,14 @@ gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, Pango, PangoCairo
 
 APP_NAME = "Clarionet"
-APP_VERSION = "87.5.028"
+APP_VERSION = "87.5.029"
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 CONFIG_DIR = Path.home() / ".config" / "clarionet"
 RADIOS_PATH = CONFIG_DIR / "radios.json"
 CONFIG_PATH = CONFIG_DIR / "config.json"
-MPV_SOCKET = CONFIG_DIR / "mpv.sock"
+MPV_SOCKET = CONFIG_DIR / f"mpv-{os.getpid()}.sock"
+MPV_SOCKET_PATTERN = "mpv-*.sock"
+MPV_LEGACY_SOCKET = CONFIG_DIR / "mpv.sock"
 ICONS_DIR = CONFIG_DIR / "icons"
 LOG_PATH = CONFIG_DIR / "clarionet.log"
 MPV_LOG_PATH = CONFIG_DIR / "clarionet-mpv.log"
@@ -87,7 +89,20 @@ warnings.filterwarnings(
 )
 
 
-def create_crash_report(exc_type, exc_value, tb):
+CRASH_SIGNATURE_FRAMES = 3
+_crash_signatures = {}
+_crash_signatures_lock = threading.Lock()
+
+
+def crash_signature(exc_type, tb):
+    """Signature stable d'un plantage: type + N dernières frames."""
+    frames = traceback.extract_tb(tb)[-CRASH_SIGNATURE_FRAMES:]
+    return "|".join(
+        [exc_type.__name__] + [f"{frame.filename}:{frame.lineno}" for frame in frames]
+    )
+
+
+def create_crash_report(exc_type, exc_value, tb, occurrences=1):
     """Crée et enregistre un rapport de plantage détaillé."""
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     crash_id = f"crash_{timestamp}_{uuid.uuid4().hex[:8]}"
@@ -104,6 +119,7 @@ def create_crash_report(exc_type, exc_value, tb):
         "traceback": "".join(tb_lines),
         "python_version": sys.version,
         "platform": sys.platform,
+        "occurrences": occurrences,
     }
 
     try:
@@ -116,6 +132,20 @@ def create_crash_report(exc_type, exc_value, tb):
         return crash_id, None
 
 
+def update_crash_occurrences(crash_file, occurrences):
+    """Met à jour le compteur d'occurrences d'un rapport existant."""
+    if not crash_file:
+        return
+    try:
+        with open(crash_file, "r", encoding="utf-8") as f:
+            crash_data = json.load(f)
+        crash_data["occurrences"] = occurrences
+        with open(crash_file, "w", encoding="utf-8") as f:
+            json.dump(crash_data, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error("Failed to update crash report %s: %s", crash_file, e)
+
+
 def setup_crash_handler():
     """Configure le gestionnaire global d'exceptions non gérées."""
     def handle_exception(exc_type, exc_value, tb):
@@ -123,8 +153,30 @@ def setup_crash_handler():
             sys.__excepthook__(exc_type, exc_value, tb)
             return
 
+        signature = crash_signature(exc_type, tb)
+        with _crash_signatures_lock:
+            record = _crash_signatures.get(signature)
+            if record is None:
+                _crash_signatures[signature] = {"count": 1, "file": None}
+            else:
+                record["count"] += 1
+                count = record["count"]
+                crash_file = record["file"]
+
+        if record is not None:
+            # Plantage déjà rapporté: on agrège au lieu d'écrire un fichier
+            # et de journaliser à chaque répétition (cf. rafale cairo.Context).
+            if count == 2 or count % 10 == 0:
+                logger.error(
+                    "Uncaught exception repeated %s times: %s", count, signature
+                )
+                update_crash_occurrences(crash_file, count)
+            return
+
         logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, tb))
         crash_id, crash_file = create_crash_report(exc_type, exc_value, tb)
+        with _crash_signatures_lock:
+            _crash_signatures[signature]["file"] = crash_file
 
         sys.__excepthook__(exc_type, exc_value, tb)
 
@@ -145,11 +197,16 @@ def check_for_pending_crash_reports(window):
                 with open(crash_file, "r", encoding="utf-8") as f:
                     crash_data = json.load(f)
 
+                if crash_data.get("acknowledged"):
+                    continue
+
+                occurrences = crash_data.get("occurrences", 1)
+                repeat = f"\nOccurrences: {occurrences}" if occurrences > 1 else ""
                 message = (
                     f"Clarionet s'est planté précédemment.\n\n"
                     f"Type d'erreur: {crash_data.get('exception_type', 'Inconnu')}\n"
                     f"Message: {crash_data.get('exception_message', 'N/A')}\n"
-                    f"Heure: {crash_data.get('timestamp', 'N/A')}\n\n"
+                    f"Heure: {crash_data.get('timestamp', 'N/A')}{repeat}\n\n"
                     f"Rapport ID: {crash_data.get('crash_id', 'N/A')}"
                 )
 
@@ -164,6 +221,9 @@ def check_for_pending_crash_reports(window):
                 dialog.run()
                 dialog.destroy()
 
+                crash_data["acknowledged"] = True
+                with open(crash_file, "w", encoding="utf-8") as f:
+                    json.dump(crash_data, f, indent=2, ensure_ascii=False)
                 logger.info("Crash report acknowledged: %s", crash_file.name)
             except json.JSONDecodeError:
                 logger.error("Invalid crash report: %s", crash_file)
@@ -365,37 +425,127 @@ def favicon_url(url):
     return f"{scheme}://{host}/favicon.ico"
 
 
+def socket_in_use(path):
+    """Vrai si une socket unix accepte encore les connexions."""
+    probe = socket.socket(socket.AF_UNIX)
+    try:
+        probe.connect(str(path))
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
+def cleanup_stale_mpv_sockets():
+    """Supprime les sockets IPC laissées par des instances mortes."""
+    try:
+        # mpv.sock: partagée par les versions <= 87.5.028, encore vivantes ou non
+        if MPV_LEGACY_SOCKET.exists() and not socket_in_use(MPV_LEGACY_SOCKET):
+            MPV_LEGACY_SOCKET.unlink(missing_ok=True)
+            logger.info("Removed stale mpv socket %s", MPV_LEGACY_SOCKET)
+        for path in CONFIG_DIR.glob(MPV_SOCKET_PATTERN):
+            if path == MPV_SOCKET:
+                continue
+            try:
+                pid = int(path.stem.split("-", 1)[1])
+            except (IndexError, ValueError):
+                continue
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                path.unlink(missing_ok=True)
+                logger.info("Removed stale mpv socket %s", path)
+            except OSError:
+                continue
+    except OSError as exc:
+        logger.warning("Failed to clean stale mpv sockets: %s", exc)
+
+
 class MpvController:
+    SOCKET_TIMEOUT = 5.0
+    SOCKET_POLL_INTERVAL = 0.05
+    SEND_ATTEMPTS = 5
+    SEND_RETRY_DELAY = 0.2
+
     def __init__(self, socket_path):
         self.socket_path = socket_path
         self.process = None
         self.listener_thread = None
         self.listener_lock = threading.Lock()
+        self.process_lock = threading.RLock()
         self.stop_event = threading.Event()
 
-    def _ensure_process(self):
-        if self.process and self.process.poll() is None:
-            return
-        if self.socket_path.exists():
-            self.socket_path.unlink()
-        cmd = [
-            "mpv",
-            "--no-terminal",
-            "--idle=yes",
-            f"--input-ipc-server={self.socket_path}",
-            f"--log-file={MPV_LOG_PATH}",
-            "--msg-level=all=warn",
-        ]
+    def _terminate_process(self):
+        process = self.process
+        self.process = None
+        if process and process.poll() is None:
+            process.send_signal(signal.SIGTERM)
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                process.kill()
         try:
-            self.process = subprocess.Popen(cmd)
-        except FileNotFoundError:
-            raise RuntimeError("mpv n'est pas disponible sur ce systeme")
+            self.socket_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    def _wait_for_socket(self):
+        """Attend l'apparition effective de la socket IPC de mpv."""
+        deadline = time.monotonic() + self.SOCKET_TIMEOUT
+        while time.monotonic() < deadline:
+            if self.process.poll() is not None:
+                code = self.process.returncode
+                self.process = None
+                raise RuntimeError(f"mpv s'est arrete au demarrage (code {code})")
+            if self.socket_path.exists():
+                return
+            time.sleep(self.SOCKET_POLL_INTERVAL)
+        self._terminate_process()
+        raise RuntimeError(
+            f"socket mpv absente apres {self.SOCKET_TIMEOUT:.0f}s: {self.socket_path}"
+        )
+
+    def _ensure_process(self):
+        with self.process_lock:
+            if self.process and self.process.poll() is None:
+                if self.socket_path.exists():
+                    return
+                logger.warning(
+                    "mpv socket %s disparue, redemarrage du processus",
+                    self.socket_path,
+                )
+                self._terminate_process()
+            try:
+                self.socket_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            cmd = [
+                "mpv",
+                "--no-terminal",
+                "--idle=yes",
+                f"--input-ipc-server={self.socket_path}",
+                f"--log-file={MPV_LOG_PATH}",
+                "--msg-level=all=warn",
+            ]
+            try:
+                self.process = subprocess.Popen(cmd)
+            except FileNotFoundError:
+                raise RuntimeError("mpv n'est pas disponible sur ce systeme")
+            except OSError as exc:
+                raise RuntimeError(f"demarrage de mpv impossible: {exc}")
+            self._wait_for_socket()
+            logger.info(
+                "MPV process started with PID %s on %s",
+                self.process.pid,
+                self.socket_path,
+            )
 
     def _send(self, command):
-        self._ensure_process()
         message = json.dumps(command).encode("utf-8") + b"\n"
         last_error = None
-        for _ in range(5):
+        for attempt in range(1, self.SEND_ATTEMPTS + 1):
+            self._ensure_process()
             sock = socket.socket(socket.AF_UNIX)
             try:
                 sock.connect(str(self.socket_path))
@@ -403,11 +553,11 @@ class MpvController:
                 return
             except OSError as exc:
                 last_error = exc
-                time.sleep(0.1)
+                logger.warning("Send attempt %s failed: %s", attempt, exc)
+                time.sleep(self.SEND_RETRY_DELAY)
             finally:
                 sock.close()
-        if last_error:
-            raise last_error
+        raise RuntimeError(f"communication avec mpv impossible: {last_error}")
 
     def start_event_listener(self, callback):
         with self.listener_lock:
@@ -424,7 +574,13 @@ class MpvController:
 
     def _listen_events(self, callback):
         while not self.stop_event.is_set():
-            self._ensure_process()
+            try:
+                self._ensure_process()
+            except RuntimeError as exc:
+                logger.warning("MPV listener waiting for mpv: %s", exc)
+                if self.stop_event.wait(1.0):
+                    return
+                continue
             sock = None
             for _ in range(10):
                 if self.stop_event.is_set():
@@ -485,15 +641,20 @@ class MpvController:
     def quit(self):
         self.stop_event_listener()
         if not self.process or self.process.poll() is not None:
+            self.socket_path.unlink(missing_ok=True)
             return
         try:
             self._send({"command": ["quit"]})
-        except OSError:
+        except (RuntimeError, OSError):
             pass
         try:
             self.process.wait(timeout=1)
-        except Exception:
+        except subprocess.TimeoutExpired:
             self.process.send_signal(signal.SIGTERM)
+        try:
+            self.socket_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 class RadioRow(Gtk.ListBoxRow):
@@ -3055,6 +3216,7 @@ class ClarionetApplication(Gtk.Application):
 
     def do_activate(self):
         logger.info("Start %s %s", APP_NAME, APP_VERSION)
+        cleanup_stale_mpv_sockets()
         window = ClarionetApp(self)
         check_for_pending_crash_reports(window)
         window.show_all()

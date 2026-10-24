@@ -1,11 +1,11 @@
 pkgname=clarionet
-pkgver=87.5.026
+pkgver=87.5.029
 pkgrel=1
 pkgdesc="Minimalist autoradio-style internet radio player"
 arch=("x86_64")
 url=""
 license=("MIT")
-depends=("python" "gtk3" "python-gobject" "mpv")
+depends=("python" "gtk3" "python-gobject" "python-cairo" "mpv")
 
 package() {
   install -Dm755 /dev/stdin "${pkgdir}/usr/bin/clarionet" <<'EOF'

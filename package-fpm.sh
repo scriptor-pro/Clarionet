@@ -2,7 +2,7 @@
 set -euo pipefail
 
 NAME="clarionet"
-VERSION="87.5.027"
+VERSION="87.5.029"
 DESC="Minimalist autoradio-style internet radio player"
 LICENSE="MIT"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,6 +51,7 @@ build() {
       depends+=(
         --depends "python3"
         --depends "python3-gi"
+        --depends "python3-gi-cairo"
         --depends "gir1.2-gtk-3.0"
         --depends "libgtk-3-0"
         --depends "mpv"
@@ -60,6 +61,7 @@ build() {
       depends+=(
         --depends "python3"
         --depends "python3-gobject"
+        --depends "python3-cairo"
         --depends "gtk3"
         --depends "mpv"
       )
@@ -68,6 +70,7 @@ build() {
       depends+=(
         --depends "python"
         --depends "python-gobject"
+        --depends "python-cairo"
         --depends "gtk3"
         --depends "mpv"
       )

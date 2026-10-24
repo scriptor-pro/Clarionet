@@ -71,7 +71,9 @@ Chaque rapport est un fichier JSON contenant:
   "exception_message": "division by zero",
   "traceback": "...",
   "python_version": "3.11.2",
-  "platform": "linux"
+  "platform": "linux",
+  "occurrences": 1,
+  "acknowledged": true
 }
 ```
 

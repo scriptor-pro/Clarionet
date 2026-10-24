@@ -26,6 +26,8 @@ dist/packages/linux/pacman/*.pkg.tar.zst
 dist/packages/macos/*.app/
 dist/packages/windows/*.exe
 dist/packages/windows/*.iss
+dist/pyinstaller/
+build/
 
 # Local screenshots
 2026-*.png

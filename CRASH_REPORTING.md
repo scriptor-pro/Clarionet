@@ -18,10 +18,24 @@ Lors du démarrage de Clarionet, un gestionnaire d'exceptions global est configu
   - La pile d'appels complète (traceback)
   - La version de l'application
   - La version de Python et la plateforme
+  - Le nombre d'occurrences (`occurrences`)
+
+### 1bis. Agrégation des plantages répétés
+
+Un plantage déclenché dans une boucle (handler `draw` GTK, timer, thread) peut se
+répéter des milliers de fois par seconde. Les plantages sont donc dédupliqués par
+signature (type d'exception + 3 dernières frames):
+
+- Le premier plantage écrit un rapport JSON et journalise le traceback
+- Les répétitions incrémentent seulement `occurrences` dans ce même rapport
+  (fichier et journal mis à jour à la 2e occurrence puis toutes les 10)
 
 ### 2. Notifications au démarrage
 
 À chaque lancement de Clarionet, l'application vérifie les plantages précédents et affiche une notification modale si des rapports sont trouvés. Cela permet au développeur d'être immédiatement informé des problèmes.
+
+Un rapport affiché est marqué `"acknowledged": true` et n'est plus présenté aux
+démarrages suivants; le fichier JSON reste disponible dans `crashes/`.
 
 ### 3. Stockage local
 

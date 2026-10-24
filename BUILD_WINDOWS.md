@@ -52,7 +52,7 @@ xcopy dist\Clarionet\* dist\packages\windows\clarionet\ /E /I
 
 1. Download and install [Inno Setup](https://jrsoftware.org/isdl.php)
 2. Update `packaging/windows/installer.iss`:
-   - Replace `__VERSION__` with the actual version (e.g., 87.5.028)
+   - Replace `__VERSION__` with the actual version (e.g., 87.5.029)
    - Replace `__SOURCE_DIR__` with the project root directory
 3. Open the script in Inno Setup and compile
 
@@ -60,7 +60,7 @@ Alternatively, use the command line:
 
 ```powershell
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /O"dist\packages\windows" `
-  /D"MyAppVersion=87.5.028" `
+  /D"MyAppVersion=87.5.029" `
   packaging\windows\installer.iss
 ```
 
@@ -68,7 +68,7 @@ Alternatively, use the command line:
 
 The installer will be created at:
 ```
-dist/packages/windows/clarionet-setup-87.5.028.exe
+dist/packages/windows/clarionet-setup-87.5.029.exe
 ```
 
 ## Notes

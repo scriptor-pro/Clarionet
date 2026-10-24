@@ -36,12 +36,13 @@ def create_test_crash_report():
             "crash_id": crash_id,
             "timestamp": timestamp,
             "app_name": "Clarionet",
-            "app_version": "87.5.028",
+            "app_version": "87.5.029",
             "exception_type": exc_type.__name__,
             "exception_message": str(exc_value),
             "traceback": "".join(tb_lines),
             "python_version": sys.version,
             "platform": sys.platform,
+            "occurrences": 1,
         }
 
         with open(crash_file, "w", encoding="utf-8") as f:
