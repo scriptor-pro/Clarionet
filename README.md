@@ -4,7 +4,7 @@ Application minimaliste pour écouter des radios en ligne. Disponible sur Linux,
 
 ## Version
 
-87.5.029
+87.5.030
 
 ## Installation
 

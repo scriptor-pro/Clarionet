@@ -40,7 +40,7 @@ gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, Pango, PangoCairo
 
 APP_NAME = "Clarionet"
-APP_VERSION = "87.5.029"
+APP_VERSION = "87.5.030"
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 CONFIG_DIR = Path.home() / ".config" / "clarionet"
 RADIOS_PATH = CONFIG_DIR / "radios.json"
@@ -1558,10 +1558,10 @@ class ClarionetApp(Gtk.ApplicationWindow):
             return
         current = self.listbox.get_selected_row()
         if current in rows:
-            index = rows.index(current)
+            # Boucle aux extrémités : Z → A et A → Z
+            index = (rows.index(current) + offset) % len(rows)
         else:
-            index = 0
-        index = max(0, min(len(rows) - 1, index + offset))
+            index = 0 if offset >= 0 else len(rows) - 1
         self.listbox.select_row(rows[index])
 
     def get_sorted_rows(self):

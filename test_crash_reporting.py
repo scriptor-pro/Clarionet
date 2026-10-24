@@ -36,7 +36,7 @@ def create_test_crash_report():
             "crash_id": crash_id,
             "timestamp": timestamp,
             "app_name": "Clarionet",
-            "app_version": "87.5.029",
+            "app_version": "87.5.030",
             "exception_type": exc_type.__name__,
             "exception_message": str(exc_value),
             "traceback": "".join(tb_lines),
