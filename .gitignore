@@ -32,3 +32,5 @@ build/
 # Local screenshots
 2026-*.png
 interface-autoradio.png
+*.deb
+*.rpm
